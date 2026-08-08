@@ -161,7 +161,7 @@ export function createClient(modelAlias) {
 
   if (provider === 'opencode') {
     const key = API_KEYS.opencode;
-    if (!key) throw new ProviderError({ provider: 'opencode', message: 'OPENCODE_API_KEY not set — use /api opencode <key>' });
+    if (!key) throw new ProviderError({ provider: 'opencode', message: 'OpenCode Zen is not connected. Choose another model.' });
     // OpenCode Zen authenticates via x-api-key and 401s on a Bearer header,
     // so strip the SDK's default Authorization header.
     return { type: 'openai', client: new OpenAI({
