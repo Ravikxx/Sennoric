@@ -1659,7 +1659,10 @@ One word only:`;
         this.onStreamEnd();
         {
           const { kind, message } = classifyProviderError(err, this.modelAlias);
-          this.onMessage({ role: 'error', content: message, errorKind: kind });
+          this.onMessage({
+            role: 'error', content: message, errorKind: kind,
+            errorRequiresSignIn: isAxionHostedProvider(resolveProvider(this.modelAlias)),
+          });
         }
         return null;
       }
@@ -1668,7 +1671,10 @@ One word only:`;
     this.onStreamEnd();
     {
       const { kind, message } = classifyProviderError(lastError, this.modelAlias);
-      this.onMessage({ role: 'error', content: message, errorKind: kind });
+      this.onMessage({
+        role: 'error', content: message, errorKind: kind,
+        errorRequiresSignIn: isAxionHostedProvider(resolveProvider(this.modelAlias)),
+      });
     }
     return null;
   }
