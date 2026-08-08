@@ -587,7 +587,7 @@ async function purgeExpiredDesktopAuthCodes(db) {
 
 // ── Desktop integration OAuth broker ─────────────────────────────────────
 // Native apps cannot keep an OAuth client secret. The Worker already owns
-// the registered Google/GitHub credentials, so it performs the provider code
+// the registered Google/GitHub/Notion credentials, so it performs the provider code
 // exchange and hands Desktop a short-lived, PKCE-bound one-time code. Provider
 // tokens are encrypted even during their brief stay in D1 and never travel in
 // a URL, renderer process, or log.
@@ -603,6 +603,11 @@ const DESKTOP_INTEGRATION_PROVIDERS = {
     authURL: 'https://accounts.google.com/o/oauth2/v2/auth',
     redirectUri: 'https://api.amplifiedsmp.org/auth/google/callback',
     scopes: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/calendar.events openid email profile',
+  },
+  notion: {
+    authURL: 'https://api.notion.com/v1/oauth/authorize',
+    redirectUri: 'https://api.amplifiedsmp.org/auth/notion/callback',
+    scopes: '',
   },
 }
 
@@ -636,19 +641,22 @@ async function decryptDesktopIntegrationToken(value, secret) {
 
 function desktopIntegrationAuthUrl(provider, env, state) {
   const cfg = DESKTOP_INTEGRATION_PROVIDERS[provider]
-  const clientId = provider === 'github' ? env.GITHUB_CLIENT_ID : env.GOOGLE_CLIENT_ID
+  const clientId = provider === 'github' ? env.GITHUB_CLIENT_ID
+    : provider === 'notion' ? env.NOTION_CLIENT_ID
+      : env.GOOGLE_CLIENT_ID
   if (!cfg || !clientId) return null
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: cfg.redirectUri,
     response_type: 'code',
-    scope: cfg.scopes,
     state,
   })
+  if (cfg.scopes) params.set('scope', cfg.scopes)
   if (provider === 'google') {
     params.set('access_type', 'offline')
     params.set('prompt', 'consent select_account')
   }
+  if (provider === 'notion') params.set('owner', 'user')
   return `${cfg.authURL}?${params}`
 }
 
@@ -669,7 +677,10 @@ app.post('/auth/desktop/integrations/:provider/start', async (c) => {
     exp: Date.now() + DESKTOP_INTEGRATION_CODE_TTL,
   }, c.env.TOKEN_SECRET)
   const authorizationUrl = desktopIntegrationAuthUrl(provider, c.env, state)
-  if (!authorizationUrl) return json({ error: `${provider === 'github' ? 'GitHub' : 'Google'} connections are temporarily unavailable.` }, 503)
+  if (!authorizationUrl) {
+    const label = provider === 'github' ? 'GitHub' : provider === 'notion' ? 'Notion' : 'Google'
+    return json({ error: `${label} connections are temporarily unavailable.` }, 503)
+  }
   return json({ authorization_url: authorizationUrl })
 })
 
@@ -1004,17 +1015,25 @@ app.get('/auth/github/callback', async (c) => {
     return desktopFailure || new Response('Missing code', { status: 400 })
   }
   const return_to = decodeState(c.req.query('state'))
+  const signedState = await parseToken(c.req.query('state'), c.env.TOKEN_SECRET)
 
   const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ client_id: c.env.GITHUB_CLIENT_ID, client_secret: c.env.GITHUB_CLIENT_SECRET, code }),
+    body: JSON.stringify({
+      client_id: c.env.GITHUB_CLIENT_ID,
+      client_secret: c.env.GITHUB_CLIENT_SECRET,
+      code,
+      redirect_uri: 'https://api.amplifiedsmp.org/auth/github/callback',
+    }),
   })
   const githubTokens = await tokenRes.json()
   const { access_token } = githubTokens
-  if (!access_token) return new Response('GitHub OAuth failed', { status: 400 })
+  if (!access_token) {
+    const desktopFailure = failDesktopIntegration(signedState, 'github', 'provider_error')
+    return desktopFailure || new Response('GitHub could not authorize this connection. Try again.', { status: 400 })
+  }
 
-  const signedState = await parseToken(c.req.query('state'), c.env.TOKEN_SECRET)
   const desktopIntegration = await finishDesktopIntegration(c, signedState, 'github', githubTokens)
   if (desktopIntegration) return desktopIntegration
 
@@ -1032,6 +1051,37 @@ app.get('/auth/github/callback', async (c) => {
     return oauthLinkFinish(c, { id_field: 'github_id', provider: 'github', provider_id: String(profile.id), state: linkState })
   }
   return oauthFinish(c, { id_field: 'github_id', email, provider_id: String(profile.id), return_to })
+})
+
+// ── Notion integration OAuth ─────────────────────────────────────────────
+
+app.get('/auth/notion/callback', async (c) => {
+  const signedState = await parseToken(c.req.query('state'), c.env.TOKEN_SECRET)
+  const code = c.req.query('code')
+  if (!code) {
+    const desktopFailure = failDesktopIntegration(
+      signedState, 'notion', c.req.query('error') || 'access_denied'
+    )
+    return desktopFailure || new Response('Missing code', { status: 400 })
+  }
+
+  const basic = btoa(`${c.env.NOTION_CLIENT_ID}:${c.env.NOTION_CLIENT_SECRET}`)
+  const tokenRes = await fetch('https://api.notion.com/v1/oauth/token', {
+    method: 'POST',
+    headers: { Authorization: `Basic ${basic}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: 'https://api.amplifiedsmp.org/auth/notion/callback',
+    }),
+  })
+  const tokens = await tokenRes.json()
+  if (!tokens.access_token) {
+    const desktopFailure = failDesktopIntegration(signedState, 'notion', 'provider_error')
+    return desktopFailure || new Response('Notion could not authorize this connection. Try again.', { status: 400 })
+  }
+  return await finishDesktopIntegration(c, signedState, 'notion', tokens)
+    || new Response('This Notion connection request expired. Return to Sennoric and try again.', { status: 400 })
 })
 
 // ── Discord OAuth ──────────────────────────────────────────────────────────
@@ -3945,10 +3995,25 @@ app.put('/dashboard/prefs', async (c) => {
   const user = await requireAuth(c)
   if (!user) return json({ error: 'Not authenticated' }, 401)
   const { notify_limit, notify_announcements, notify_scheduled, sandbox_mode } = await c.req.json().catch(() => ({}))
+  const preference = (value) => (
+    typeof value === 'boolean' || value === 0 || value === 1
+      ? (value ? 1 : 0)
+      : null
+  )
+  const limit = preference(notify_limit)
+  const announcements = preference(notify_announcements)
+  const scheduled = preference(notify_scheduled)
   await c.env.DB.prepare(
-    `INSERT INTO email_prefs (user_id, notify_limit, notify_announcements, notify_scheduled) VALUES (?,?,?,?)
-     ON CONFLICT (user_id) DO UPDATE SET notify_limit=excluded.notify_limit, notify_announcements=excluded.notify_announcements, notify_scheduled=excluded.notify_scheduled`
-  ).bind(user.id, notify_limit ? 1 : 0, notify_announcements ? 1 : 0, notify_scheduled ? 1 : 0).run()
+    `INSERT INTO email_prefs (user_id, notify_limit, notify_announcements, notify_scheduled)
+       VALUES (?, COALESCE(?, 1), COALESCE(?, 1), COALESCE(?, 1))
+     ON CONFLICT (user_id) DO UPDATE SET
+       notify_limit=COALESCE(?, email_prefs.notify_limit),
+       notify_announcements=COALESCE(?, email_prefs.notify_announcements),
+       notify_scheduled=COALESCE(?, email_prefs.notify_scheduled)`
+  ).bind(
+    user.id, limit, announcements, scheduled,
+    limit, announcements, scheduled,
+  ).run()
   if (sandbox_mode === 'ask' || sandbox_mode === 'auto') {
     await c.env.DB.prepare('UPDATE users SET sandbox_mode=? WHERE id=?').bind(sandbox_mode, user.id).run()
   }

@@ -192,8 +192,7 @@ export async function connectOAuth(service, { onStatus, onToken, pastedToken } =
   // have the token exchange fail afterward). Paste-token flows (Slack)
   // don't need pre-registered apps.
   if (cfg.tokenFlow !== 'paste' && (!cfg.clientId || !cfg.clientSecret)) {
-    const U = service.toUpperCase();
-    throw new Error(`${cfg.label} OAuth isn't configured on this build — no client ID. Register an OAuth app and set AXION_${U}_CLIENT_ID and AXION_${U}_CLIENT_SECRET, or use a paste-token integration (slack) instead.`);
+    throw new Error(`${cfg.label} connections are temporarily unavailable. Keep using Sennoric and try again shortly.`);
   }
 
   let tokenData;

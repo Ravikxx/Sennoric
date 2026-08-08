@@ -1,8 +1,8 @@
 export const OAUTH_PROVIDERS = {
   github: {
     label:        'GitHub',
-    clientId:     process.env.AXION_GITHUB_CLIENT_ID     || '',
-    clientSecret: process.env.AXION_GITHUB_CLIENT_SECRET || '',
+    clientId:     process.env.SENNORIC_GITHUB_CLIENT_ID     || '',
+    clientSecret: process.env.SENNORIC_GITHUB_CLIENT_SECRET || '',
     // Redirect flow ("click Connect, approve on github.com, done") — the
     // same UX as Google. GitHub requires an exact redirect_uri match against
     // the app's registered callback URL, so this pins a fixed local port
@@ -21,8 +21,8 @@ export const OAUTH_PROVIDERS = {
   },
   google: {
     label:        'Google',
-    clientId:     process.env.AXION_GOOGLE_CLIENT_ID     || '',
-    clientSecret: process.env.AXION_GOOGLE_CLIENT_SECRET || '',
+    clientId:     process.env.SENNORIC_GOOGLE_CLIENT_ID     || '',
+    clientSecret: process.env.SENNORIC_GOOGLE_CLIENT_SECRET || '',
     tokenFlow:    'redirect',
     authURL:      'https://accounts.google.com/o/oauth2/v2/auth',
     tokenURL:     'https://oauth2.googleapis.com/token',
@@ -31,8 +31,8 @@ export const OAUTH_PROVIDERS = {
   },
   notion: {
     label:         'Notion',
-    clientId:      process.env.AXION_NOTION_CLIENT_ID     || '',
-    clientSecret:  process.env.AXION_NOTION_CLIENT_SECRET || '',
+    clientId:      process.env.SENNORIC_NOTION_CLIENT_ID     || '',
+    clientSecret:  process.env.SENNORIC_NOTION_CLIENT_SECRET || '',
     // Redirect flow — same "click Connect, approve on notion.so, done" UX as
     // Google/GitHub, via a public integration instead of pasting an internal
     // integration's token. Notion requires an exact redirect_uri match (pin
