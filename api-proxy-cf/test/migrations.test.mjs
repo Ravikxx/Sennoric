@@ -29,7 +29,7 @@ test('user_settings accepts the same TEXT ids used by users after migration 038'
   )
 })
 
-test('domain migration handoffs are single-use and reference users', () => {
+test('domain migration codes insert with a user association and start unredeemed', () => {
   const db = new DatabaseSync(':memory:')
   db.exec('CREATE TABLE users (id TEXT PRIMARY KEY)')
   db.exec(migration('041_domain_migration_codes.sql'))

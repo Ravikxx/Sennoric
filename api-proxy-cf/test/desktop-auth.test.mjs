@@ -24,6 +24,7 @@ class Statement {
 class D1TestDatabase {
   constructor() {
     this.database = new DatabaseSync(':memory:')
+    this.database.exec('PRAGMA foreign_keys=ON')
     this.database.exec(`
       CREATE TABLE users (
         id TEXT PRIMARY KEY,
@@ -50,7 +51,8 @@ class D1TestDatabase {
         user_id TEXT NOT NULL,
         created_at INTEGER NOT NULL,
         expires_at INTEGER NOT NULL,
-        redeemed_at INTEGER
+        redeemed_at INTEGER,
+        FOREIGN KEY (user_id) REFERENCES users(id)
       );
     `)
   }
@@ -245,14 +247,38 @@ test('the old HttpOnly session migrates through a signed single-use handoff', as
   assert.ok(acceptUrl.searchParams.get('handoff'))
   assert.equal(acceptUrl.searchParams.has('token'), false)
 
-  const accepted = await app.request(acceptUrl.href, {}, env)
+  const attempts = await Promise.all([
+    app.request(acceptUrl.href, {}, env),
+    app.request(acceptUrl.href, {}, env),
+  ])
+  assert.deepEqual(attempts.map(response => response.status).sort(), [302, 400])
+  const accepted = attempts.find(response => response.status === 302)
   assert.equal(accepted.status, 302)
   assert.equal(accepted.headers.get('location'), 'https://sennoric.com/keys?tab=usage')
   assert.match(accepted.headers.get('set-cookie'), /Domain=\.sennoric\.com/)
   assert.match(accepted.headers.get('set-cookie'), /HttpOnly/)
+  assert.match(accepted.headers.get('set-cookie'), /;\s*Secure(?:;|$)/i)
 
   const replay = await app.request(acceptUrl.href, {}, env)
   assert.equal(replay.status, 400)
+})
+
+test('an expired domain migration code cannot be accepted', async () => {
+  const { db, env } = makeEnv()
+  const token = await sessionToken('u1')
+  const start = await app.request(
+    'https://api.amplifiedsmp.org/auth/domain-migrate?return=%2Fkeys',
+    { headers: { Cookie: `axion_session=${token}` } },
+    env,
+  )
+  const acceptUrl = new URL(start.headers.get('location'))
+  const signedState = acceptUrl.searchParams.get('handoff')
+  const state = JSON.parse(atob(signedState.split('.')[0]))
+  db.prepare('UPDATE domain_migration_codes SET expires_at=? WHERE code=?')
+    .bind(Date.now() - 1, state.code).run()
+
+  const response = await app.request(acceptUrl.href, {}, env)
+  assert.equal(response.status, 400)
 })
 
 test('domain migration without an old session redirects without minting a handoff', async () => {

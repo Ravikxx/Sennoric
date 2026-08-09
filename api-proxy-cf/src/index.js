@@ -1520,6 +1520,9 @@ app.delete('/dashboard/account', async (c) => {
     db.prepare('DELETE FROM cloud_tasks WHERE user_id=?').bind(user.id),
     db.prepare('DELETE FROM email_prefs WHERE user_id=?').bind(user.id),
     db.prepare('DELETE FROM device_codes WHERE user_id=?').bind(user.id),
+    db.prepare('DELETE FROM desktop_auth_codes WHERE user_id=?').bind(user.id),
+    db.prepare('DELETE FROM desktop_integration_codes WHERE user_id=?').bind(user.id),
+    db.prepare('DELETE FROM domain_migration_codes WHERE user_id=?').bind(user.id),
     db.prepare('DELETE FROM appeals WHERE user_id=?').bind(user.id),
     db.prepare('DELETE FROM rate_limits WHERE key LIKE ?').bind(`%:${user.id}`),
     db.prepare('DELETE FROM users WHERE id=?').bind(user.id),
@@ -4490,7 +4493,7 @@ app.post('/appeal/:token', async (c) => {
         <p style="color:#ccc;margin:0 0 4px"><strong>Email:</strong> ${escHtml(appeal.email)}</p>
         <p style="color:#ccc;margin:0 0 16px"><strong>Reason:</strong></p>
         <div style="background:#0f0f11;border:1px solid #2a2a30;border-radius:8px;padding:14px 16px;color:#ccc;font-size:14px;line-height:1.6;white-space:pre-wrap;margin-bottom:20px">${escHtml(reason.trim())}</div>
-        <a href="https://api.sennoric.com/admin" style="display:inline-block;background:#e8602c;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Review in admin panel &rarr;</a>
+        <a href="https://sennoric.com/admin" style="display:inline-block;background:#e8602c;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Review in admin panel &rarr;</a>
       `),
     }))
   }
