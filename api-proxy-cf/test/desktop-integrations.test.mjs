@@ -83,7 +83,7 @@ test('GitHub integration OAuth is brokered with PKCE and the provider token is s
 
   mock.method(globalThis, 'fetch', async (input, init) => {
     assert.equal(String(input), 'https://github.com/login/oauth/access_token')
-    assert.equal(JSON.parse(init.body).redirect_uri, 'https://api.amplifiedsmp.org/auth/github/callback')
+    assert.equal(JSON.parse(init.body).redirect_uri, 'https://api.sennoric.com/auth/github/callback')
     return Response.json({ access_token: 'gho_secret', scope: 'repo read:user', token_type: 'bearer' })
   })
   const callback = await app.request(`/auth/github/callback?code=provider-code&state=${encodeURIComponent(authorizationUrl.searchParams.get('state'))}`, {}, env)
@@ -151,7 +151,7 @@ test('Notion integration OAuth is brokered without exposing its client secret', 
   mock.method(globalThis, 'fetch', async (input, init) => {
     assert.equal(String(input), 'https://api.notion.com/v1/oauth/token')
     assert.equal(init.headers.Authorization, `Basic ${btoa('notion-client:notion-secret')}`)
-    assert.equal(JSON.parse(init.body).redirect_uri, 'https://api.amplifiedsmp.org/auth/notion/callback')
+    assert.equal(JSON.parse(init.body).redirect_uri, 'https://api.sennoric.com/auth/notion/callback')
     return Response.json({ access_token: 'secret_notion', workspace_name: 'Sennoric' })
   })
   const callback = await app.request(`/auth/notion/callback?code=provider-code&state=${encodeURIComponent(authorizationUrl.searchParams.get('state'))}`, {}, env)

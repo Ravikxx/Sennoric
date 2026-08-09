@@ -29,7 +29,7 @@ import {
 import { reviewPendingMessages } from './messageReview.js'
 export { ChatGeneration } from './chatGeneration.js'
 import { avatarUrlForUser, installAvatarRoutes } from './avatar.js'
-import { WEB_ORIGIN, ALLOWED_WEB_ORIGINS } from './webOrigins.js'
+import { WEB_ORIGIN, LEGACY_WEB_ORIGIN, ALLOWED_WEB_ORIGINS } from './webOrigins.js'
 import {
   ModerationAdminError,
   banAccountFromModeration,
@@ -43,11 +43,8 @@ import {
 } from './moderationAdmin.js'
 
 const app = new Hono()
-// WEB_ORIGIN/NEW_WEB_ORIGIN/ALLOWED_WEB_ORIGINS live in webOrigins.js so this
-// file and chatGeneration.js share one definition. Every WEB_ORIGIN use here
-// that builds redirect/email links deliberately still points at the old
-// domain until the sennoric.com cutover is confirmed, since changing those
-// before the new domain resolves would hand out dead links.
+// WEB_ORIGIN/LEGACY_WEB_ORIGIN/ALLOWED_WEB_ORIGINS live in webOrigins.js so this
+// file and chatGeneration.js share one definition during the domain cutover.
 
 app.use('*', async (c, next) => {
   await next()
@@ -63,6 +60,24 @@ app.use('*', cors({
   credentials: true,
   allowHeaders: ['Content-Type', 'Authorization'],
 }))
+
+// Keep every bookmarked old-site URL useful after GitHub Pages moves to the
+// new custom domain. The account page deliberately detours through the old API:
+// a top-level request is the only reliable way to send the old HttpOnly cookie,
+// and /auth/domain-migrate converts it into a one-time handoff for the new API.
+app.use('*', async (c, next) => {
+  const requestUrl = new URL(c.req.url)
+  if (requestUrl.origin !== LEGACY_WEB_ORIGIN) return next()
+
+  const destination = new URL(`${requestUrl.pathname}${requestUrl.search}`, WEB_ORIGIN)
+  if (requestUrl.pathname === '/keys' || requestUrl.pathname === '/keys.html') {
+    destination.searchParams.set('domain_migration', 'checked')
+    const migrate = new URL('/auth/domain-migrate', 'https://api.amplifiedsmp.org')
+    migrate.searchParams.set('return', destination.href)
+    return noStoreRedirect(migrate.href)
+  }
+  return noStoreRedirect(destination.href)
+})
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -180,6 +195,8 @@ function genKey() {
 const TOKEN_TTL = 7 * 24 * 60 * 60 * 1000 // 7 days
 const SESSION_COOKIE_TTL = 30 * 24 * 60 * 60 * 1000 // 30 days
 const SESSION_COOKIE = 'axion_session'
+const DOMAIN_MIGRATION_TTL = 60 * 1000
+const NEW_API_ORIGIN = 'https://api.sennoric.com'
 
 // `v` pins the token to the user's token_version at mint time so a password
 // reset (which bumps token_version) invalidates every session token issued
@@ -258,7 +275,7 @@ function signupRequiredResponse() {
       message: 'An Sennoric account is required. Sign up or sign in, then use your session or an Sennoric API key.',
       type: 'authentication_error',
       signup_required: true,
-      signup_url: 'https://axion.amplifiedsmp.org/chat',
+      signup_url: 'https://sennoric.com/chat',
     },
   }, 401)
 }
@@ -288,14 +305,10 @@ async function requireKey(c) {
 }
 
 // ── Session cookie ───────────────────────────────────────────────────────
-// A parallel, longer-lived identity channel for requests that can't carry an
-// Authorization header — namely GET /auth/link/:provider, which is a
-// top-level browser navigation, not a fetch. Set on every successful
-// browser-facing login (password, OAuth callback, email verify) as a
-// Domain=.amplifiedsmp.org cookie so it's sent on both same-site XHR (with
-// credentials:'include', already wired into the frontend's login/register
-// calls) and top-level cross-subdomain navigations (SameSite=Lax allows
-// top-level GET navigations regardless of site).
+// A parallel, longer-lived identity channel for requests that cannot carry
+// an Authorization header. The old and new API hosts coexist during cutover.
+// A response can only set a parent-domain cookie for its own registrable
+// domain, so derive the cookie domain from the request host.
 
 function getCookieValue(c, name) {
   const header = c.req.header('Cookie') || ''
@@ -303,12 +316,17 @@ function getCookieValue(c, name) {
   return match ? decodeURIComponent(match[1]) : null
 }
 
-function sessionCookieHeader(token) {
-  return `${SESSION_COOKIE}=${token}; Domain=.amplifiedsmp.org; Path=/; Max-Age=${SESSION_COOKIE_TTL / 1000}; HttpOnly; Secure; SameSite=Lax`
+function sessionCookieDomain(c) {
+  const hostname = new URL(c.req.url).hostname
+  return hostname === 'api.sennoric.com' ? '.sennoric.com' : '.amplifiedsmp.org'
 }
 
-function clearSessionCookieHeader() {
-  return `${SESSION_COOKIE}=; Domain=.amplifiedsmp.org; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`
+function sessionCookieHeader(c, token) {
+  return `${SESSION_COOKIE}=${token}; Domain=${sessionCookieDomain(c)}; Path=/; Max-Age=${SESSION_COOKIE_TTL / 1000}; HttpOnly; Secure; SameSite=Lax`
+}
+
+function clearSessionCookieHeader(c) {
+  return `${SESSION_COOKIE}=; Domain=${sessionCookieDomain(c)}; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`
 }
 
 async function sessionUserFromCookie(c) {
@@ -321,6 +339,81 @@ async function sessionUserFromCookie(c) {
   if ((payload.v || 0) !== (user.token_version || 0)) return null
   return user
 }
+
+function domainMigrationDestination(raw) {
+  try {
+    const candidate = new URL(raw || '/keys', WEB_ORIGIN)
+    if (!ALLOWED_WEB_ORIGINS.includes(candidate.origin)) throw new Error('untrusted origin')
+    return new URL(`${candidate.pathname}${candidate.search}${candidate.hash}`, WEB_ORIGIN).href
+  } catch {
+    return `${WEB_ORIGIN}/keys`
+  }
+}
+
+function noStoreRedirect(location) {
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: location,
+      'Cache-Control': 'no-store',
+      'Referrer-Policy': 'no-referrer',
+    },
+  })
+}
+
+// Cross-domain session handoff. The old API verifies its HttpOnly cookie and
+// issues a signed, 60-second, single-use code. The new API consumes that code
+// atomically and sets its own HttpOnly cookie; the session token never enters
+// a URL or page script.
+app.get('/auth/domain-migrate', async (c) => {
+  const destination = domainMigrationDestination(c.req.query('return'))
+  const user = await sessionUserFromCookie(c)
+  if (!user) return noStoreRedirect(destination)
+
+  const now = Date.now()
+  const code = bytesToHex(crypto.getRandomValues(new Uint8Array(32)))
+  await c.env.DB.prepare(
+    'INSERT INTO domain_migration_codes (code, user_id, created_at, expires_at) VALUES (?,?,?,?)'
+  ).bind(code, user.id, now, now + DOMAIN_MIGRATION_TTL).run()
+
+  const handoff = await signState({
+    action: 'domain_migration',
+    code,
+    uid: user.id,
+    exp: now + DOMAIN_MIGRATION_TTL,
+  }, c.env.TOKEN_SECRET)
+  const accept = new URL('/auth/domain-migrate/accept', NEW_API_ORIGIN)
+  accept.searchParams.set('handoff', handoff)
+  accept.searchParams.set('return', destination)
+  return noStoreRedirect(accept.href)
+})
+
+app.get('/auth/domain-migrate/accept', async (c) => {
+  if (new URL(c.req.url).hostname !== 'api.sennoric.com') {
+    return new Response('Migration codes must be redeemed on api.sennoric.com.', { status: 400 })
+  }
+
+  const state = await parseToken(c.req.query('handoff'), c.env.TOKEN_SECRET)
+  if (state?.action !== 'domain_migration' || !/^[a-f0-9]{64}$/.test(state.code || '') || !state.uid) {
+    return new Response('This migration link is invalid or expired.', { status: 400 })
+  }
+
+  const now = Date.now()
+  const consumed = await c.env.DB.prepare(
+    'UPDATE domain_migration_codes SET redeemed_at=? WHERE code=? AND user_id=? AND redeemed_at IS NULL AND expires_at>?'
+  ).bind(now, state.code, state.uid, now).run()
+  if (Number(consumed.meta?.changes || 0) !== 1) {
+    return new Response('This migration link was already used or expired.', { status: 400 })
+  }
+
+  const user = await c.env.DB.prepare('SELECT * FROM users WHERE id=?').bind(state.uid).first()
+  if (!user || user.banned) return new Response('This account cannot be migrated.', { status: 401 })
+
+  const res = noStoreRedirect(domainMigrationDestination(c.req.query('return')))
+  const token = await makeToken(user.id, c.env.TOKEN_SECRET, user.token_version || 0, SESSION_COOKIE_TTL)
+  res.headers.set('Set-Cookie', sessionCookieHeader(c, token))
+  return res
+})
 
 // 3 requests per account per 15 minutes — distinct from the per-IP
 // checkRateLimit above, so an account can't be spammed regardless of how
@@ -347,7 +440,7 @@ async function sendEmail(resendKey, { to, subject, html, from, replyTo }) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
     body: JSON.stringify({
-      from: from || 'Sennoric <noreply@amplifiedsmp.org>',
+      from: from || 'Sennoric <noreply@sennoric.com>',
       to: [to],
       subject,
       html,
@@ -377,12 +470,12 @@ function emailWrap(inner) {
 }
 
 async function sendVerificationEmail(email, token, resendKey) {
-  const link = `https://api.amplifiedsmp.org/auth/verify?token=${token}`
+  const link = `https://api.sennoric.com/auth/verify?token=${token}`
   await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
     body: JSON.stringify({
-      from: 'Sennoric <noreply@amplifiedsmp.org>',
+      from: 'Sennoric <noreply@sennoric.com>',
       to: [email],
       subject: 'Verify your Sennoric account',
       html: `
@@ -440,7 +533,7 @@ app.post('/auth/register', async (c) => {
     ).bind(appealId, id, email.toLowerCase(), token, 'pending', now).run()
 
     if (c.env.RESEND_API_KEY) {
-      const appealUrl = 'https://api.amplifiedsmp.org/appeal/' + token
+      const appealUrl = 'https://api.sennoric.com/appeal/' + token
       c.executionCtx.waitUntil(sendEmail(c.env.RESEND_API_KEY, {
         to: email.toLowerCase(),
         subject: 'Your Sennoric account has been suspended',
@@ -477,9 +570,9 @@ app.get('/auth/verify', async (c) => {
   const sessionToken = await makeToken(user.id, c.env.TOKEN_SECRET, user.token_version || 0)
   const res = new Response(null, {
     status: 302,
-    headers: { Location: `https://axion.amplifiedsmp.org/keys#verified=${encodeURIComponent(sessionToken)}&email=${encodeURIComponent(user.email)}` },
+    headers: { Location: `https://sennoric.com/keys#verified=${encodeURIComponent(sessionToken)}&email=${encodeURIComponent(user.email)}` },
   })
-  res.headers.set('Set-Cookie', sessionCookieHeader(await makeToken(user.id, c.env.TOKEN_SECRET, user.token_version || 0, SESSION_COOKIE_TTL)))
+  res.headers.set('Set-Cookie', sessionCookieHeader(c, await makeToken(user.id, c.env.TOKEN_SECRET, user.token_version || 0, SESSION_COOKIE_TTL)))
   return res
 })
 
@@ -583,6 +676,7 @@ async function purgeExpiredDesktopAuthCodes(db) {
   const cutoff = Date.now() - DESKTOP_CODE_TTL
   await db.prepare('DELETE FROM desktop_auth_codes WHERE expires_at < ?').bind(cutoff).run()
   await db.prepare('DELETE FROM desktop_integration_codes WHERE expires_at < ?').bind(cutoff).run()
+  await db.prepare('DELETE FROM domain_migration_codes WHERE expires_at < ?').bind(cutoff).run()
 }
 
 // ── Desktop integration OAuth broker ─────────────────────────────────────
@@ -596,17 +690,17 @@ const DESKTOP_INTEGRATION_CODE_TTL = 5 * 60 * 1000
 const DESKTOP_INTEGRATION_PROVIDERS = {
   github: {
     authURL: 'https://github.com/login/oauth/authorize',
-    redirectUri: 'https://api.amplifiedsmp.org/auth/github/callback',
+    redirectUri: 'https://api.sennoric.com/auth/github/callback',
     scopes: 'repo read:org read:user user:email',
   },
   google: {
     authURL: 'https://accounts.google.com/o/oauth2/v2/auth',
-    redirectUri: 'https://api.amplifiedsmp.org/auth/google/callback',
+    redirectUri: 'https://api.sennoric.com/auth/google/callback',
     scopes: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/calendar.events openid email profile',
   },
   notion: {
     authURL: 'https://api.notion.com/v1/oauth/authorize',
-    redirectUri: 'https://api.amplifiedsmp.org/auth/notion/callback',
+    redirectUri: 'https://api.sennoric.com/auth/notion/callback',
     scopes: '',
   },
 }
@@ -739,14 +833,14 @@ app.post('/auth/desktop/integrations/token', async (c) => {
 // ── OAuth shared helper ────────────────────────────────────────────────────
 
 const RETURN_DESTINATIONS = {
-  admin:      'https://axion.amplifiedsmp.org/admin',
-  home:       'https://axion.amplifiedsmp.org',
-  keys:       'https://axion.amplifiedsmp.org/keys',
-  playground: 'https://axion.amplifiedsmp.org/playground',
-  chat:       'https://axion.amplifiedsmp.org/chat',
+  admin:      'https://sennoric.com/admin',
+  home:       'https://sennoric.com',
+  keys:       'https://sennoric.com/keys',
+  playground: 'https://sennoric.com/playground',
+  chat:       'https://sennoric.com/chat',
   // The consent page preserves the PKCE challenge across an OAuth round-trip
   // in sessionStorage, so this destination needs no query parameters.
-  desktop:    'https://axion.amplifiedsmp.org/desktop-auth',
+  desktop:    'https://sennoric.com/desktop-auth',
 }
 
 async function oauthFinish(c, { id_field, email, provider_id, return_to }) {
@@ -793,7 +887,7 @@ async function oauthFinish(c, { id_field, email, provider_id, return_to }) {
         'INSERT INTO appeals (id, user_id, email, token, status, created_at) VALUES (?,?,?,?,?,?)'
       ).bind(appealId, uid, email.toLowerCase(), appealToken, 'pending', now).run()
       if (c.env.RESEND_API_KEY) {
-        const appealUrl = 'https://api.amplifiedsmp.org/appeal/' + appealToken
+        const appealUrl = 'https://api.sennoric.com/appeal/' + appealToken
         c.executionCtx.waitUntil(sendEmail(c.env.RESEND_API_KEY, {
           to: email.toLowerCase(),
           subject: 'Your Sennoric account has been suspended',
@@ -825,7 +919,7 @@ async function oauthFinish(c, { id_field, email, provider_id, return_to }) {
     status: 302,
     headers: { Location: `${base}#verified=${encodeURIComponent(token)}&email=${encodeURIComponent(email || '')}` },
   })
-  res.headers.set('Set-Cookie', sessionCookieHeader(await makeToken(user.id, c.env.TOKEN_SECRET, user.token_version || 0, SESSION_COOKIE_TTL)))
+  res.headers.set('Set-Cookie', sessionCookieHeader(c, await makeToken(user.id, c.env.TOKEN_SECRET, user.token_version || 0, SESSION_COOKIE_TTL)))
   return res
 }
 
@@ -883,7 +977,7 @@ app.get('/auth/link/:provider', async (c) => {
   if (provider === 'google') {
     const params = new URLSearchParams({
       client_id: c.env.GOOGLE_CLIENT_ID,
-      redirect_uri: 'https://api.amplifiedsmp.org/auth/google/callback',
+      redirect_uri: 'https://api.sennoric.com/auth/google/callback',
       response_type: 'code',
       scope: 'openid email profile',
       prompt: 'select_account',
@@ -894,7 +988,7 @@ app.get('/auth/link/:provider', async (c) => {
   if (provider === 'github') {
     const params = new URLSearchParams({
       client_id: c.env.GITHUB_CLIENT_ID,
-      redirect_uri: 'https://api.amplifiedsmp.org/auth/github/callback',
+      redirect_uri: 'https://api.sennoric.com/auth/github/callback',
       scope: 'user:email',
       state,
     })
@@ -902,7 +996,7 @@ app.get('/auth/link/:provider', async (c) => {
   }
   const params = new URLSearchParams({
     client_id: c.env.DISCORD_CLIENT_ID,
-    redirect_uri: 'https://api.amplifiedsmp.org/auth/discord/callback',
+    redirect_uri: 'https://api.sennoric.com/auth/discord/callback',
     response_type: 'code',
     scope: 'identify email',
     state,
@@ -935,7 +1029,7 @@ function decodeState(state) { try { return JSON.parse(atob(state || '')).return_
 app.get('/auth/google', (c) => {
   const params = new URLSearchParams({
     client_id: c.env.GOOGLE_CLIENT_ID,
-    redirect_uri: 'https://api.amplifiedsmp.org/auth/google/callback',
+    redirect_uri: 'https://api.sennoric.com/auth/google/callback',
     response_type: 'code',
     scope: 'openid email profile',
     prompt: 'select_account',
@@ -964,7 +1058,7 @@ app.get('/auth/google/callback', async (c) => {
       code,
       client_id: c.env.GOOGLE_CLIENT_ID,
       client_secret: c.env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: 'https://api.amplifiedsmp.org/auth/google/callback',
+      redirect_uri: 'https://api.sennoric.com/auth/google/callback',
       grant_type: 'authorization_code',
     }),
   })
@@ -999,7 +1093,7 @@ app.get('/auth/google/callback', async (c) => {
 app.get('/auth/github', (c) => {
   const params = new URLSearchParams({
     client_id: c.env.GITHUB_CLIENT_ID,
-    redirect_uri: 'https://api.amplifiedsmp.org/auth/github/callback',
+    redirect_uri: 'https://api.sennoric.com/auth/github/callback',
     scope: 'user:email',
     state: encodeState(c.req.query('return_to')),
   })
@@ -1024,7 +1118,7 @@ app.get('/auth/github/callback', async (c) => {
       client_id: c.env.GITHUB_CLIENT_ID,
       client_secret: c.env.GITHUB_CLIENT_SECRET,
       code,
-      redirect_uri: 'https://api.amplifiedsmp.org/auth/github/callback',
+      redirect_uri: 'https://api.sennoric.com/auth/github/callback',
     }),
   })
   const githubTokens = await tokenRes.json()
@@ -1072,7 +1166,7 @@ app.get('/auth/notion/callback', async (c) => {
     body: JSON.stringify({
       grant_type: 'authorization_code',
       code,
-      redirect_uri: 'https://api.amplifiedsmp.org/auth/notion/callback',
+      redirect_uri: 'https://api.sennoric.com/auth/notion/callback',
     }),
   })
   const tokens = await tokenRes.json()
@@ -1089,7 +1183,7 @@ app.get('/auth/notion/callback', async (c) => {
 app.get('/auth/discord', (c) => {
   const params = new URLSearchParams({
     client_id: c.env.DISCORD_CLIENT_ID,
-    redirect_uri: 'https://api.amplifiedsmp.org/auth/discord/callback',
+    redirect_uri: 'https://api.sennoric.com/auth/discord/callback',
     response_type: 'code',
     scope: 'identify email',
     state: encodeState(c.req.query('return_to')),
@@ -1110,7 +1204,7 @@ app.get('/auth/discord/callback', async (c) => {
       client_secret: c.env.DISCORD_CLIENT_SECRET,
       grant_type: 'authorization_code',
       code,
-      redirect_uri: 'https://api.amplifiedsmp.org/auth/discord/callback',
+      redirect_uri: 'https://api.sennoric.com/auth/discord/callback',
     }),
   })
   const { access_token } = await tokenRes.json()
@@ -1142,7 +1236,7 @@ app.post('/auth/login', async (c) => {
   if (user.banned) return json({ error: 'Your account has been suspended. Check your email for an appeal link.', banned: true }, 403)
   if (upgradedHash) c.executionCtx.waitUntil(c.env.DB.prepare('UPDATE users SET pw_hash=? WHERE id=?').bind(upgradedHash, user.id).run())
   const res = json({ token: await makeToken(user.id, c.env.TOKEN_SECRET, user.token_version || 0), email: user.email })
-  res.headers.set('Set-Cookie', sessionCookieHeader(await makeToken(user.id, c.env.TOKEN_SECRET, user.token_version || 0, SESSION_COOKIE_TTL)))
+  res.headers.set('Set-Cookie', sessionCookieHeader(c, await makeToken(user.id, c.env.TOKEN_SECRET, user.token_version || 0, SESSION_COOKIE_TTL)))
   return res
 })
 
@@ -1154,14 +1248,14 @@ app.get('/auth/session', async (c) => {
   const user = await sessionUserFromCookie(c)
   if (!user) return json({ error: 'Not authenticated' }, 401)
   const res = json({ token: await makeToken(user.id, c.env.TOKEN_SECRET, user.token_version || 0), email: user.email })
-  res.headers.set('Set-Cookie', sessionCookieHeader(await makeToken(user.id, c.env.TOKEN_SECRET, user.token_version || 0, SESSION_COOKIE_TTL)))
+  res.headers.set('Set-Cookie', sessionCookieHeader(c, await makeToken(user.id, c.env.TOKEN_SECRET, user.token_version || 0, SESSION_COOKIE_TTL)))
   return res
 })
 
 const RESET_TOKEN_TTL = 60 * 60 // 1 hour, in seconds (reset_token_expires is epoch seconds)
 
 async function sendPasswordResetEmail(email, token, resendKey) {
-  const link = `https://axion.amplifiedsmp.org/keys#reset=${token}`
+  const link = `https://sennoric.com/keys#reset=${token}`
   await sendEmail(resendKey, {
     to: email,
     subject: 'Reset your Sennoric password',
@@ -1426,6 +1520,9 @@ app.delete('/dashboard/account', async (c) => {
     db.prepare('DELETE FROM cloud_tasks WHERE user_id=?').bind(user.id),
     db.prepare('DELETE FROM email_prefs WHERE user_id=?').bind(user.id),
     db.prepare('DELETE FROM device_codes WHERE user_id=?').bind(user.id),
+    db.prepare('DELETE FROM desktop_auth_codes WHERE user_id=?').bind(user.id),
+    db.prepare('DELETE FROM desktop_integration_codes WHERE user_id=?').bind(user.id),
+    db.prepare('DELETE FROM domain_migration_codes WHERE user_id=?').bind(user.id),
     db.prepare('DELETE FROM appeals WHERE user_id=?').bind(user.id),
     db.prepare('DELETE FROM rate_limits WHERE key LIKE ?').bind(`%:${user.id}`),
     db.prepare('DELETE FROM users WHERE id=?').bind(user.id),
@@ -1433,7 +1530,7 @@ app.delete('/dashboard/account', async (c) => {
   await db.batch(stmts)
 
   const res = json({ ok: true })
-  res.headers.set('Set-Cookie', clearSessionCookieHeader())
+  res.headers.set('Set-Cookie', clearSessionCookieHeader(c))
   return res
 })
 
@@ -1446,7 +1543,7 @@ app.delete('/dashboard/account', async (c) => {
 const SQUARE_PLAN_VARIATION_ID = 'YEXEI6A4P4NTO73GCAJANOGJ'
 const SQUARE_ITEM_VARIATION_ID = '5NSUWXYLVOOXSZXZB7SY6XPQ' // "Regular" $7/mo, backs the plan above
 const SQUARE_API = 'https://connect.squareup.com/v2'
-const SQUARE_WEBHOOK_URL = 'https://api.amplifiedsmp.org/webhooks/square'
+const SQUARE_WEBHOOK_URL = 'https://api.sennoric.com/webhooks/square'
 
 function squareApi(env, path, opts = {}) {
   return fetch(`${SQUARE_API}${path}`, {
@@ -1487,7 +1584,7 @@ app.post('/billing/checkout', async (c) => {
       planVariationId: SQUARE_PLAN_VARIATION_ID,
       itemVariationId: SQUARE_ITEM_VARIATION_ID,
       buyerEmail: user.email,
-      redirectUrl: 'https://axion.amplifiedsmp.org/settings.html',
+      redirectUrl: 'https://sennoric.com/settings.html',
     })),
   })
   const data = await res.json().catch(() => ({}))
@@ -3545,8 +3642,8 @@ app.post('/v1/chat/completions', async (c) => {
               <h2 style="margin:0 0 8px;color:#e8e8f0">Usage alert</h2>
               <p style="color:#888;margin:0 0 16px">Your account${keyRow ? ` (API key <strong style="color:#e8e8f0">${keyRow.label}</strong>)` : ''} has used <strong style="color:#e8602c">$${usedUsd} / $${budgetUsd}</strong> this week (80%).</p>
               <p style="color:#888;margin:0 0 24px">Your usage resets ${resetLabel}. If you need more, reply to this email.</p>
-              <a href="https://axion.amplifiedsmp.org/keys" style="display:inline-block;background:#e8602c;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">View usage &rarr;</a>
-              <p style="color:#555;font-size:12px;margin-top:24px">To turn off these alerts, visit your <a href="https://axion.amplifiedsmp.org/keys" style="color:#e8602c">account settings</a>.</p>
+              <a href="https://sennoric.com/keys" style="display:inline-block;background:#e8602c;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">View usage &rarr;</a>
+              <p style="color:#555;font-size:12px;margin-top:24px">To turn off these alerts, visit your <a href="https://sennoric.com/keys" style="color:#e8602c">account settings</a>.</p>
             `),
           })
         }
@@ -3746,7 +3843,7 @@ app.post('/admin/moderation/messages/:id/ban', async (c) => {
       adminEmail: user.email,
     })
     if (c.env.RESEND_API_KEY) {
-      const appealUrl = `https://api.amplifiedsmp.org/appeal/${banned.appeal_token}`
+      const appealUrl = `https://api.sennoric.com/appeal/${banned.appeal_token}`
       c.executionCtx.waitUntil(sendEmail(c.env.RESEND_API_KEY, {
         to: banned.email,
         subject: 'Your Sennoric account has been suspended',
@@ -4045,7 +4142,7 @@ app.get('/waitlist/accept', async (c) => {
   if (entry.invite_expires < Math.floor(Date.now() / 1000)) {
     return new Response('This invite link has expired. Contact support for a new one.', { status: 400, headers: { 'Content-Type': 'text/plain' } })
   }
-  if (entry.status === 'accepted') return new Response(null, { status: 302, headers: { Location: 'https://axion.amplifiedsmp.org/keys' } })
+  if (entry.status === 'accepted') return new Response(null, { status: 302, headers: { Location: 'https://sennoric.com/keys' } })
 
   // Find or create user
   let user = await c.env.DB.prepare('SELECT * FROM users WHERE email=?').bind(entry.email).first()
@@ -4062,7 +4159,7 @@ app.get('/waitlist/accept', async (c) => {
   const sessionToken = await makeToken(user.id, c.env.TOKEN_SECRET, user.token_version || 0)
   return new Response(null, {
     status: 302,
-    headers: { Location: `https://axion.amplifiedsmp.org/keys#verified=${encodeURIComponent(sessionToken)}&email=${encodeURIComponent(entry.email)}` },
+    headers: { Location: `https://sennoric.com/keys#verified=${encodeURIComponent(sessionToken)}&email=${encodeURIComponent(entry.email)}` },
   })
 })
 
@@ -4091,7 +4188,7 @@ app.post('/admin/waitlist/:id/approve', async (c) => {
   ).bind(token, expires, user.email, entry.id).run()
 
   if (c.env.RESEND_API_KEY) {
-    const link = `https://api.amplifiedsmp.org/waitlist/accept?token=${token}`
+    const link = `https://api.sennoric.com/waitlist/accept?token=${token}`
     c.executionCtx.waitUntil(sendEmail(c.env.RESEND_API_KEY, {
       to: entry.email,
       subject: "You're in — your Sennoric invite is ready",
@@ -4137,7 +4234,7 @@ app.get('/announcements/unsubscribe', async (c) => {
   const token = c.req.query('token')
   if (!token) return new Response('Missing token.', { status: 400, headers: { 'Content-Type': 'text/plain' } })
   await c.env.DB.prepare('UPDATE subscribers SET active=0 WHERE unsub_token=?').bind(token).run()
-  return new Response(null, { status: 302, headers: { Location: 'https://axion.amplifiedsmp.org/announcements?unsubscribed=1' } })
+  return new Response(null, { status: 302, headers: { Location: 'https://sennoric.com/announcements?unsubscribed=1' } })
 })
 
 // Called by GitHub Actions when announcements.html is updated — secret-protected, no login needed
@@ -4183,15 +4280,15 @@ app.post('/webhook/announce', async (c) => {
         for (let i = 0; i < all.length; i += 10) {
           await Promise.all(all.slice(i, i + 10).map(r => {
             const unsubUrl = r.unsub_token
-              ? `https://api.amplifiedsmp.org/announcements/unsubscribe?token=${r.unsub_token}`
-              : `https://axion.amplifiedsmp.org/keys`
+              ? `https://api.sennoric.com/announcements/unsubscribe?token=${r.unsub_token}`
+              : `https://sennoric.com/keys`
             return sendEmail(c.env.RESEND_API_KEY, {
               to: r.email,
               subject: `Sennoric: ${titleStr}`,
               html: emailWrap(`
                 <h2 style="margin:0 0 8px;color:#e8e8f0">${titleStr}</h2>
                 <div style="color:#ccc;line-height:1.7;margin:0 0 24px;white-space:pre-wrap">${bodyStr}</div>
-                <a href="https://axion.amplifiedsmp.org/announcements" style="display:inline-block;background:#e8602c;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Read on site &rarr;</a>
+                <a href="https://sennoric.com/announcements" style="display:inline-block;background:#e8602c;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Read on site &rarr;</a>
                 <p style="color:#555;font-size:12px;margin-top:24px"><a href="${unsubUrl}" style="color:#666">Unsubscribe</a></p>
               `),
             })
@@ -4265,12 +4362,12 @@ app.post('/admin/invite', async (c) => {
   ).bind(token, email.toLowerCase(), user.email, expires_at).run()
 
   if (c.env.RESEND_API_KEY) {
-    const link = `https://api.amplifiedsmp.org/admin/invite/accept?token=${token}`
+    const link = `https://api.sennoric.com/admin/invite/accept?token=${token}`
     c.executionCtx.waitUntil(fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${c.env.RESEND_API_KEY}` },
       body: JSON.stringify({
-        from: 'Sennoric <noreply@amplifiedsmp.org>',
+        from: 'Sennoric <noreply@sennoric.com>',
         to: [email],
         subject: `${user.email} invited you to the Sennoric admin panel`,
         html: `<div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#0f0f11;color:#e8e8f0">
@@ -4304,7 +4401,7 @@ app.get('/admin/invite/accept', async (c) => {
 
   return new Response(null, {
     status: 302,
-    headers: { Location: `https://axion.amplifiedsmp.org/admin#invited=1` },
+    headers: { Location: `https://sennoric.com/admin#invited=1` },
   })
 })
 
@@ -4396,7 +4493,7 @@ app.post('/appeal/:token', async (c) => {
         <p style="color:#ccc;margin:0 0 4px"><strong>Email:</strong> ${escHtml(appeal.email)}</p>
         <p style="color:#ccc;margin:0 0 16px"><strong>Reason:</strong></p>
         <div style="background:#0f0f11;border:1px solid #2a2a30;border-radius:8px;padding:14px 16px;color:#ccc;font-size:14px;line-height:1.6;white-space:pre-wrap;margin-bottom:20px">${escHtml(reason.trim())}</div>
-        <a href="https://api.amplifiedsmp.org/admin" style="display:inline-block;background:#e8602c;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Review in admin panel &rarr;</a>
+        <a href="https://sennoric.com/admin" style="display:inline-block;background:#e8602c;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Review in admin panel &rarr;</a>
       `),
     }))
   }
@@ -4437,7 +4534,7 @@ app.post('/admin/appeals/:token/accept', async (c) => {
       html: emailWrap(`
         <h2 style="margin:0 0 8px;color:#e8e8f0">Appeal approved</h2>
         <p style="color:#ccc;margin:0 0 24px">Your account has been reinstated. You can now sign in and use the service normally.</p>
-        <a href="https://axion.amplifiedsmp.org/keys" style="display:inline-block;background:#e8602c;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Sign in &rarr;</a>
+        <a href="https://sennoric.com/keys" style="display:inline-block;background:#e8602c;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Sign in &rarr;</a>
       `),
     }))
   }
@@ -4754,12 +4851,12 @@ app.post('/orgs/:id/invite', async (c) => {
   ).bind(token, orgId, email.toLowerCase(), assignRole, ctx.user.email, expires_at).run()
 
   if (c.env.RESEND_API_KEY) {
-    const link = `https://axion.amplifiedsmp.org/keys#invite=${token}&org=${orgId}`
+    const link = `https://sennoric.com/keys#invite=${token}&org=${orgId}`
     c.executionCtx.waitUntil(fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${c.env.RESEND_API_KEY}` },
       body: JSON.stringify({
-        from: 'Sennoric <noreply@amplifiedsmp.org>',
+        from: 'Sennoric <noreply@sennoric.com>',
         to: [email],
         subject: `${ctx.user.email} invited you to ${org?.name || 'a team'} on Sennoric`,
         html: `<div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#0f0f11;color:#e8e8f0">

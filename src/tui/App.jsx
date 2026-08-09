@@ -2149,13 +2149,13 @@ function Session({
           const testKey = getAxionKey();
           if (!testKey) { push({ type: 'error', text: 'No Sennoric key set.' }); return; }
           push({ type: 'info', text: 'Testing key…' });
-          fetch('https://api.amplifiedsmp.org/v1/chat/completions', {
+          fetch('https://api.sennoric.com/v1/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${testKey}` },
             body: JSON.stringify({ model: 'lumen', messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 }),
           }).then(async r => {
             if (r.status === 200) push({ type: 'info', text: 'Key is valid. Lumen is reachable.' });
-            else if (r.status === 401) push({ type: 'error', text: 'Key rejected by server (401). Generate a fresh key at axion.amplifiedsmp.org/keys' });
+            else if (r.status === 401) push({ type: 'error', text: 'Key rejected by server (401). Generate a fresh key at sennoric.com/keys' });
             else if (r.status === 429) push({ type: 'info', text: 'Key is valid but rate-limited.' });
             else push({ type: 'error', text: `Unexpected response: HTTP ${r.status}` });
           }).catch(e => push({ type: 'error', text: `Network error: ${e.message}` }));
@@ -2398,7 +2398,7 @@ function Session({
         return;
       }
       case 'login': {
-        const AXION_API = 'https://api.amplifiedsmp.org';
+        const AXION_API = 'https://api.sennoric.com';
         push({ type: 'info', text: 'Opening browser to authorize your Sennoric account…' });
         try {
           const res = await fetch(`${AXION_API}/auth/device`, { method: 'POST' });
@@ -2406,7 +2406,7 @@ function Session({
           const { device_code, expires_in } = await res.json();
           const deviceCode = String(device_code);
           if (!/^[A-Za-z0-9_-]+$/.test(deviceCode)) { push({ type: 'error', text: 'Invalid device code from server.' }); return; }
-          const loginUrl = `https://axion.amplifiedsmp.org/keys#device=${deviceCode}`;
+          const loginUrl = `https://sennoric.com/keys#device=${deviceCode}`;
           try { if (process.platform === 'win32') spawn('cmd', ['/c', 'start', '', loginUrl], { detached: true, stdio: 'ignore' }).unref(); else if (process.platform === 'darwin') spawn('open', [loginUrl], { detached: true, stdio: 'ignore' }).unref(); else spawn('xdg-open', [loginUrl], { detached: true, stdio: 'ignore' }).unref(); }
           catch { push({ type: 'info', text: `Open this URL in your browser:\n${loginUrl}` }); }
           push({ type: 'info', text: `Waiting for authorization… (expires in ${Math.floor(expires_in / 60)} min)` });

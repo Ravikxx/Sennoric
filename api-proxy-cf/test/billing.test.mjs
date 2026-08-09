@@ -148,6 +148,18 @@ class D1TestDatabase {
       CREATE TABLE cloud_task_events (id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES cloud_tasks(id));
       CREATE TABLE email_prefs (user_id TEXT PRIMARY KEY REFERENCES users(id));
       CREATE TABLE device_codes (code TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id));
+      CREATE TABLE desktop_auth_codes (
+        code TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id)
+      );
+      CREATE TABLE desktop_integration_codes (
+        code TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id)
+      );
+      CREATE TABLE domain_migration_codes (
+        code TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id)
+      );
       CREATE TABLE appeals (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(id),
@@ -565,7 +577,7 @@ test('only an authenticated admin can manually run pending message review', asyn
   assert.match(runResult.run_id, /^[0-9a-f-]{36}$/)
   assert.equal(
     runResult.details_url,
-    `https://axion.amplifiedsmp.org/admin-moderation?run=${runResult.run_id}`,
+    `https://sennoric.com/admin-moderation?run=${runResult.run_id}`,
   )
   const message = db.prepare(
     'SELECT review_status, review_run_id FROM message_log WHERE id=1'
@@ -944,6 +956,9 @@ test('account deletion removes audits, rate limits, and every key in an owned or
   db.prepare('INSERT INTO cloud_tasks (id, user_id) VALUES (?,?)').bind('member-cloud-task', 'member').run()
   db.prepare('INSERT INTO cloud_task_events (id, task_id) VALUES (?,?)').bind('member-cloud-task-event', 'member-cloud-task').run()
   db.prepare('INSERT INTO user_settings (user_id) VALUES (?)').bind('member').run()
+  db.prepare('INSERT INTO desktop_auth_codes (code, user_id) VALUES (?,?)').bind('desktop-code', 'member').run()
+  db.prepare('INSERT INTO desktop_integration_codes (code, user_id) VALUES (?,?)').bind('integration-code', 'member').run()
+  db.prepare('INSERT INTO domain_migration_codes (code, user_id) VALUES (?,?)').bind('migration-code', 'member').run()
   db.prepare(
     `INSERT INTO admin_account_edits
      (id, user_id, admin_email, previous_plan, new_plan,
@@ -1009,6 +1024,9 @@ test('account deletion removes audits, rate limits, and every key in an owned or
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM cloud_tasks WHERE user_id=?').bind('member').first().count, 0)
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM cloud_task_events WHERE task_id=?').bind('member-cloud-task').first().count, 0)
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM user_settings WHERE user_id=?').bind('member').first().count, 0)
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM desktop_auth_codes WHERE user_id=?').bind('member').first().count, 0)
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM desktop_integration_codes WHERE user_id=?').bind('member').first().count, 0)
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM domain_migration_codes WHERE user_id=?').bind('member').first().count, 0)
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM admin_account_edits WHERE user_id=?').bind('member').first().count, 0)
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM rate_limits WHERE key LIKE '%:member'").first().count, 0)
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM rate_limits WHERE key='free:unrelated-ip'").first().count, 1)
@@ -1054,6 +1072,37 @@ function executionCtx() {
     settle: () => Promise.all(pending),
   }
 }
+
+test('appeal notification links to the website admin panel', async () => {
+  const db = new D1TestDatabase()
+  addUser(db, 'appealing-user')
+  db.prepare(
+    'INSERT INTO appeals (id, user_id, email, token, status, created_at) VALUES (?,?,?,?,?,?)'
+  ).bind('appeal-1', 'appealing-user', 'appealing-user@example.com', 'appeal-token', 'pending', Date.now()).run()
+
+  let emailRequest = null
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async (url, options) => {
+    emailRequest = { url: String(url), body: JSON.parse(options.body) }
+    return Response.json({ id: 'email-1' })
+  }
+  try {
+    const { ctx, settle } = executionCtx()
+    const response = await app.request('/appeal/appeal-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'Please review this account.' }),
+    }, { DB: db, TOKEN_SECRET: 'appeal-secret', RESEND_API_KEY: 'resend-test' }, ctx)
+
+    assert.equal(response.status, 200)
+    await settle()
+    assert.equal(emailRequest.url, 'https://api.resend.com/emails')
+    assert.match(emailRequest.body.html, /href="https:\/\/sennoric\.com\/admin"/)
+    assert.doesNotMatch(emailRequest.body.html, /https:\/\/api\.sennoric\.com\/admin/)
+  } finally {
+    globalThis.fetch = realFetch
+  }
+})
 
 test('session-authenticated completions are charged to the account', async () => {
   const db = new D1TestDatabase()
@@ -1322,7 +1371,7 @@ test('chat completions require an account and never call the model for anonymous
     const body = await response.json()
     assert.equal(body.error.type, 'authentication_error')
     assert.equal(body.error.signup_required, true)
-    assert.equal(body.error.signup_url, 'https://axion.amplifiedsmp.org/chat')
+    assert.equal(body.error.signup_url, 'https://sennoric.com/chat')
     assert.equal(upstreamCalls, 0)
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM message_log').first().count, 0)
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM rate_limits WHERE key LIKE 'free:%'").first().count, 0)

@@ -31,7 +31,15 @@ tag = "v2"
 new_sqlite_classes = ["ChatGeneration"]
 
 [[routes]]
+pattern = "api.sennoric.com/*"
+zone_name = "sennoric.com"
+
+[[routes]]
 pattern = "api.amplifiedsmp.org/*"
+zone_name = "amplifiedsmp.org"
+
+[[routes]]
+pattern = "axion.amplifiedsmp.org/*"
 zone_name = "amplifiedsmp.org"
 
 [triggers]

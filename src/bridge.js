@@ -23,7 +23,7 @@ for (const [name, ep] of Object.entries(getSavedCustomEndpoints())) {
 
 const PORT = Number(process.env.BRIDGE_PORT) || 3002;
 const TOKEN = process.env.BRIDGE_TOKEN || '';
-const RELAY_URL = process.env.AXION_BRIDGE_RELAY_URL || 'wss://api.amplifiedsmp.org/bridge/ws';
+const RELAY_URL = process.env.AXION_BRIDGE_RELAY_URL || 'wss://api.sennoric.com/bridge/ws';
 
 const html = readFileSync(new URL('./assets/console.html', import.meta.url), 'utf-8');
 const xtermJs = readFileSync(new URL('../vendor/xterm.js', import.meta.url), 'utf-8');

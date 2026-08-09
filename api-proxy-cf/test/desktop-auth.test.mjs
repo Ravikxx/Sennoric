@@ -24,6 +24,7 @@ class Statement {
 class D1TestDatabase {
   constructor() {
     this.database = new DatabaseSync(':memory:')
+    this.database.exec('PRAGMA foreign_keys=ON')
     this.database.exec(`
       CREATE TABLE users (
         id TEXT PRIMARY KEY,
@@ -44,6 +45,14 @@ class D1TestDatabase {
         created_at INTEGER NOT NULL,
         expires_at INTEGER NOT NULL,
         redeemed_at INTEGER
+      );
+      CREATE TABLE domain_migration_codes (
+        code TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        redeemed_at INTEGER,
+        FOREIGN KEY (user_id) REFERENCES users(id)
       );
     `)
   }
@@ -220,4 +229,83 @@ test('a password reset invalidates a token minted before it', async () => {
 
   const response = await approve(env, minted, { code_challenge: (await pkcePair()).challenge })
   assert.equal(response.status, 401)
+})
+
+test('the old HttpOnly session migrates through a signed single-use handoff', async () => {
+  const { env } = makeEnv()
+  const token = await sessionToken('u1')
+  const start = await app.request(
+    'https://api.amplifiedsmp.org/auth/domain-migrate?return=https%3A%2F%2Faxion.amplifiedsmp.org%2Fkeys%3Ftab%3Dusage',
+    { headers: { Cookie: `axion_session=${token}` } },
+    env,
+  )
+
+  assert.equal(start.status, 302)
+  const acceptUrl = new URL(start.headers.get('location'))
+  assert.equal(acceptUrl.origin, 'https://api.sennoric.com')
+  assert.equal(acceptUrl.pathname, '/auth/domain-migrate/accept')
+  assert.ok(acceptUrl.searchParams.get('handoff'))
+  assert.equal(acceptUrl.searchParams.has('token'), false)
+
+  const attempts = await Promise.all([
+    app.request(acceptUrl.href, {}, env),
+    app.request(acceptUrl.href, {}, env),
+  ])
+  assert.deepEqual(attempts.map(response => response.status).sort(), [302, 400])
+  const accepted = attempts.find(response => response.status === 302)
+  assert.equal(accepted.status, 302)
+  assert.equal(accepted.headers.get('location'), 'https://sennoric.com/keys?tab=usage')
+  assert.match(accepted.headers.get('set-cookie'), /Domain=\.sennoric\.com/)
+  assert.match(accepted.headers.get('set-cookie'), /HttpOnly/)
+  assert.match(accepted.headers.get('set-cookie'), /;\s*Secure(?:;|$)/i)
+
+  const replay = await app.request(acceptUrl.href, {}, env)
+  assert.equal(replay.status, 400)
+})
+
+test('an expired domain migration code cannot be accepted', async () => {
+  const { db, env } = makeEnv()
+  const token = await sessionToken('u1')
+  const start = await app.request(
+    'https://api.amplifiedsmp.org/auth/domain-migrate?return=%2Fkeys',
+    { headers: { Cookie: `axion_session=${token}` } },
+    env,
+  )
+  const acceptUrl = new URL(start.headers.get('location'))
+  const signedState = acceptUrl.searchParams.get('handoff')
+  const state = JSON.parse(atob(signedState.split('.')[0]))
+  db.prepare('UPDATE domain_migration_codes SET expires_at=? WHERE code=?')
+    .bind(Date.now() - 1, state.code).run()
+
+  const response = await app.request(acceptUrl.href, {}, env)
+  assert.equal(response.status, 400)
+})
+
+test('domain migration without an old session redirects without minting a handoff', async () => {
+  const { env } = makeEnv()
+  const response = await app.request(
+    'https://api.amplifiedsmp.org/auth/domain-migrate?return=https%3A%2F%2Faxion.amplifiedsmp.org%2Fdocs',
+    {},
+    env,
+  )
+  assert.equal(response.status, 302)
+  assert.equal(response.headers.get('location'), 'https://sennoric.com/docs')
+})
+
+test('the old website preserves paths and routes account visits through the signed handoff', async () => {
+  const { env } = makeEnv()
+
+  const docs = await app.request('https://axion.amplifiedsmp.org/docs?section=cli', {}, env)
+  assert.equal(docs.status, 302)
+  assert.equal(docs.headers.get('location'), 'https://sennoric.com/docs?section=cli')
+
+  const keys = await app.request('https://axion.amplifiedsmp.org/keys?tab=usage', {}, env)
+  assert.equal(keys.status, 302)
+  const migrate = new URL(keys.headers.get('location'))
+  assert.equal(migrate.origin, 'https://api.amplifiedsmp.org')
+  assert.equal(migrate.pathname, '/auth/domain-migrate')
+  assert.equal(
+    migrate.searchParams.get('return'),
+    'https://sennoric.com/keys?tab=usage&domain_migration=checked',
+  )
 })

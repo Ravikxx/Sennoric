@@ -25,7 +25,7 @@ function labelFor(service) {
 // the request would normally go through, with no network hop at all.
 async function checkSennoricApi(env, appFetch) {
   try {
-    const res = await appFetch(new Request('https://api.amplifiedsmp.org/v1/models'))
+    const res = await appFetch(new Request('https://api.sennoric.com/v1/models'))
     return res.ok
       ? { service: 'axion_api', status: 'up', detail: '' }
       : { service: 'axion_api', status: 'down', detail: `HTTP ${res.status}` }
@@ -45,7 +45,7 @@ async function checkLumen(env, fetchImpl) {
 
 async function checkWebsite(env, fetchImpl) {
   try {
-    const res = await fetchImpl('https://axion.amplifiedsmp.org/', { method: 'GET' })
+    const res = await fetchImpl('https://sennoric.com/', { method: 'GET' })
     return res.ok
       ? { service: 'website', status: 'up', detail: '' }
       : { service: 'website', status: 'down', detail: `HTTP ${res.status}` }
@@ -74,7 +74,7 @@ async function alertAdmin(env, { subject, html }) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.RESEND_API_KEY}` },
       body: JSON.stringify({
-        from: 'Sennoric Status <status@amplifiedsmp.org>',
+        from: 'Sennoric Status <status@sennoric.com>',
         to: [env.ADMIN_ALERT_EMAIL],
         subject,
         html,
@@ -108,7 +108,7 @@ async function evaluateIncident(env, result, nowIso) {
           'INSERT INTO status_incident_updates (id, incident_id, status, body, created_at) VALUES (?,?,?,?,?)'
         ).bind(crypto.randomUUID(), id, 'investigating', body, nowIso),
       ])
-      const editLink = `https://axion.amplifiedsmp.org/admin#incident-${id}`
+      const editLink = `https://sennoric.com/admin#incident-${id}`
       await alertAdmin(env, {
         subject: `[Sennoric Status] ${title}`,
         html: emailWrap(`
@@ -131,7 +131,7 @@ async function evaluateIncident(env, result, nowIso) {
           'INSERT INTO status_incident_updates (id, incident_id, status, body, created_at) VALUES (?,?,?,?,?)'
         ).bind(crypto.randomUUID(), existing.id, 'resolved', body, nowIso),
       ])
-      const editLink = `https://axion.amplifiedsmp.org/admin#incident-${existing.id}`
+      const editLink = `https://sennoric.com/admin#incident-${existing.id}`
       await alertAdmin(env, {
         subject: `[Sennoric Status] Resolved: ${existing.title}`,
         html: emailWrap(`

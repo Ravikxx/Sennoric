@@ -1,6 +1,6 @@
 import { ALLOWED_WEB_ORIGINS } from './webOrigins.js'
 
-const COMPLETIONS_URL = 'https://api.amplifiedsmp.org/v1/chat/completions'
+const COMPLETIONS_URL = 'https://api.sennoric.com/v1/chat/completions'
 
 // Partial text is written to storage at most this often. Frequent enough that a
 // reader attaching after an eviction sees almost everything, rare enough that a
@@ -30,7 +30,7 @@ async function sendEmail(resendKey, { to, subject, html }) {
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${resendKey}` },
-    body: JSON.stringify({ from: 'Sennoric <noreply@amplifiedsmp.org>', to: [to], subject, html }),
+    body: JSON.stringify({ from: 'Sennoric <noreply@sennoric.com>', to: [to], subject, html }),
   })
   if (!res.ok) {
     const body = await res.text().catch(() => '')
@@ -63,7 +63,7 @@ async function notifyScheduledCompletion(env, job, { status, error }) {
       html: `<div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#0f0f11;color:#e8e8f0">
         <h2 style="margin:0 0 8px;color:#e8e8f0">"${name}" ${ok ? 'finished' : 'failed'}</h2>
         ${body}
-        <a href="https://axion.amplifiedsmp.org/chat" style="display:inline-block;background:#e8602c;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Open Sennoric &rarr;</a>
+        <a href="https://sennoric.com/chat" style="display:inline-block;background:#e8602c;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700">Open Sennoric &rarr;</a>
       </div>`,
     })
   } catch (err) {

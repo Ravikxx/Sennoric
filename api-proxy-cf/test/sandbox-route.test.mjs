@@ -109,7 +109,7 @@ test('anonymous requests (no auth header at all) require signup and are rejected
   const body = await response.json()
   assert.equal(body.error.type, 'authentication_error')
   assert.equal(body.error.signup_required, true)
-  assert.equal(body.error.signup_url, 'https://axion.amplifiedsmp.org/chat')
+  assert.equal(body.error.signup_url, 'https://sennoric.com/chat')
 })
 
 test('a banned session-token account is rejected (requireAuth already filters banned users to null, same as /v1/chat/completions — so this is a 401, not a 403)', async () => {

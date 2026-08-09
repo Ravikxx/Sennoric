@@ -103,8 +103,8 @@ export const BASE_URLS = {
   // Worker dispatches on body.model. Veil is retiring 2026-08-17 with no
   // replacement; remove the model entirely around that date rather than
   // updating this URL again.
-  veil:          'https://api.amplifiedsmp.org/v1',
-  lumen:         'https://api.amplifiedsmp.org/v1',
+  veil:          'https://api.sennoric.com/v1',
+  lumen:         'https://api.sennoric.com/v1',
   'axion-vision': 'https://axionlabsai-lumenvision.hf.space/v1',
   opencode:      'https://opencode.ai/zen/v1',
   zai:         'https://api.z.ai/api/paas/v4',

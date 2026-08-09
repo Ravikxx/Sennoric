@@ -63,7 +63,7 @@ function fetchStub({ axionApiUp = true, lumenUp = true, websiteUp = true } = {})
   return async (url) => {
     const s = typeof url === 'string' ? url : url.url
     if (s.includes('runpod.ai')) return { ok: lumenUp }
-    if (s.includes('api.amplifiedsmp.org')) return { ok: axionApiUp }
+    if (s.includes('api.sennoric.com')) return { ok: axionApiUp }
     return { ok: websiteUp }
   }
 }
