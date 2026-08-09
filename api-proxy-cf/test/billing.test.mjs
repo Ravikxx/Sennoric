@@ -565,7 +565,7 @@ test('only an authenticated admin can manually run pending message review', asyn
   assert.match(runResult.run_id, /^[0-9a-f-]{36}$/)
   assert.equal(
     runResult.details_url,
-    `https://axion.amplifiedsmp.org/admin-moderation?run=${runResult.run_id}`,
+    `https://sennoric.com/admin-moderation?run=${runResult.run_id}`,
   )
   const message = db.prepare(
     'SELECT review_status, review_run_id FROM message_log WHERE id=1'
@@ -1322,7 +1322,7 @@ test('chat completions require an account and never call the model for anonymous
     const body = await response.json()
     assert.equal(body.error.type, 'authentication_error')
     assert.equal(body.error.signup_required, true)
-    assert.equal(body.error.signup_url, 'https://axion.amplifiedsmp.org/chat')
+    assert.equal(body.error.signup_url, 'https://sennoric.com/chat')
     assert.equal(upstreamCalls, 0)
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM message_log').first().count, 0)
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM rate_limits WHERE key LIKE 'free:%'").first().count, 0)

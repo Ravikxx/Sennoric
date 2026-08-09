@@ -45,7 +45,7 @@ test('create_cloud_artifact posts to the Worker with the bearer token and defaul
   });
   try {
     const result = await executeTool('create_cloud_artifact', { content: 'hello' }, {});
-    assert.equal(seenUrl, 'https://api.amplifiedsmp.org/artifacts');
+    assert.equal(seenUrl, 'https://api.sennoric.com/artifacts');
     assert.equal(seenOptions.method, 'POST');
     assert.equal(seenOptions.headers.Authorization, 'Bearer test-token');
     assert.deepEqual(JSON.parse(seenOptions.body), { title: 'Untitled', kind: 'text', content: 'hello' });
@@ -172,7 +172,7 @@ test('update_cloud_artifact PUTs only the fields given, to the artifact\'s own U
   });
   try {
     const result = await executeTool('update_cloud_artifact', { id: 'a1', content: 'new content' }, {});
-    assert.equal(seenUrl, 'https://api.amplifiedsmp.org/artifacts/a1');
+    assert.equal(seenUrl, 'https://api.sennoric.com/artifacts/a1');
     assert.equal(seenOptions.method, 'PUT');
     assert.equal(seenOptions.headers.Authorization, 'Bearer test-token');
     assert.deepEqual(JSON.parse(seenOptions.body), { content: 'new content' });
@@ -229,7 +229,7 @@ test('delete_cloud_artifact DELETEs the artifact\'s own URL with the bearer toke
   });
   try {
     const result = await executeTool('delete_cloud_artifact', { id: 'a1' }, {});
-    assert.equal(seenUrl, 'https://api.amplifiedsmp.org/artifacts/a1');
+    assert.equal(seenUrl, 'https://api.sennoric.com/artifacts/a1');
     assert.equal(seenOptions.method, 'DELETE');
     assert.equal(seenOptions.headers.Authorization, 'Bearer test-token');
     assert.equal(result.success, true);

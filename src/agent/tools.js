@@ -1603,7 +1603,7 @@ export async function executeTool(name, input, {
 
         let response;
         try {
-          response = await fetch('https://api.amplifiedsmp.org/artifacts', {
+          response = await fetch('https://api.sennoric.com/artifacts', {
             method: 'POST',
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
@@ -1638,7 +1638,7 @@ export async function executeTool(name, input, {
 
         let response;
         try {
-          response = await fetch(`https://api.amplifiedsmp.org/artifacts/${encodeURIComponent(input.id)}`, {
+          response = await fetch(`https://api.sennoric.com/artifacts/${encodeURIComponent(input.id)}`, {
             method: 'PUT',
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
@@ -1663,7 +1663,7 @@ export async function executeTool(name, input, {
 
         let response;
         try {
-          response = await fetch(`https://api.amplifiedsmp.org/artifacts/${encodeURIComponent(input.id)}`, {
+          response = await fetch(`https://api.sennoric.com/artifacts/${encodeURIComponent(input.id)}`, {
             method: 'DELETE',
             headers: { Authorization: `Bearer ${token}` },
           });

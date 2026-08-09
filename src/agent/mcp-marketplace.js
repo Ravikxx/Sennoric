@@ -8,7 +8,7 @@ import { writeJsonAtomic } from '../tui/persistence.js'
 // this file, not process.cwd(), so installs work from any launch directory.
 const PKG_SERVER = (rel) => fileURLToPath(new URL(`../../mcp-servers/${rel}`, import.meta.url))
 
-const CATALOG_URL = 'https://axion.amplifiedsmp.org/mcp-catalog.json'
+const CATALOG_URL = 'https://sennoric.com/mcp-catalog.json'
 const CACHE_TTL   = 60 * 60 * 1000 // 1 hour
 
 // ── Local fallback catalog ─────────────────────────────────────────────────

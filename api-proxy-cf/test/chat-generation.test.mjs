@@ -273,7 +273,7 @@ test('the Durable Object appends the assistant reply and completes the job after
     globalThis.fetch = realFetch
   }
 
-  assert.equal(requestSeen.url, 'https://api.amplifiedsmp.org/v1/chat/completions')
+  assert.equal(requestSeen.url, 'https://api.sennoric.com/v1/chat/completions')
   assert.equal(requestSeen.options.headers.Authorization, 'Bearer signed-job-token')
   // The object owns the only model call, and it streams so watching tabs get
   // tokens as they arrive rather than one block at the end.

@@ -38,7 +38,7 @@ The deployed public website is maintained separately in
 ### Install (recommended)
 
 ```bash
-curl -fsSL https://axion.amplifiedsmp.org/install.sh | sh
+curl -fsSL https://sennoric.com/install.sh | sh
 ```
 
 Or directly via npm:

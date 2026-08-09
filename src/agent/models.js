@@ -206,7 +206,7 @@ export function createClient(modelAlias) {
       apiKey: key,
       baseURL: BASE_URLS.openrouter,
       defaultHeaders: {
-        'HTTP-Referer': 'https://axion.amplifiedsmp.org',
+        'HTTP-Referer': 'https://sennoric.com',
         'X-Title': 'Sennoric',
       },
     }) };

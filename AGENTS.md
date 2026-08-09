@@ -105,7 +105,7 @@ curl -s -X POST https://axionlabsai-lumen.hf.space/gradio_api/v1/chat/completion
 # → should return JSON with choices, not 405 HTML
 
 # Also test via CF Worker (full stack):
-curl -s -X POST https://api.amplifiedsmp.org/v1/chat/completions \
+curl -s -X POST https://api.sennoric.com/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"lumen","messages":[{"role":"user","content":"hi"}]}'
 ```

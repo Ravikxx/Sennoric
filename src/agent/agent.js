@@ -2054,7 +2054,7 @@ export function classifyProviderError(err, modelAlias) {
     const status = err.data.status ?? err?.status ?? err?.response?.status;
     if (status === 401) {
       if (modelAlias === 'other') return { kind: 'account', message: `Auth failed for custom endpoint. Use /endpoint <url> <model> <key> to set the API key.` };
-      if (isAxionHostedProvider(resolveProvider(modelAlias))) return { kind: 'account', message: `Invalid or revoked Sennoric credentials. Use /login or /axion-key <your-key> to authenticate.\n→ Sign up or get a key at axion.amplifiedsmp.org/keys` };
+      if (isAxionHostedProvider(resolveProvider(modelAlias))) return { kind: 'account', message: `Invalid or revoked Sennoric credentials. Use /login or /axion-key <your-key> to authenticate.\n→ Sign up or get a key at sennoric.com/keys` };
       return { kind: 'account', message: `Invalid API key for "${modelAlias}". Use /api ${modelAlias} <your-key> to set it.` };
     }
     if (status === 429) return { kind: 'quota', message: `Rate limited by "${providerLabel}". Wait a moment and try again.` };
@@ -2081,7 +2081,7 @@ export function classifyProviderError(err, modelAlias) {
 
   if (status === 401 || /unauthorized|invalid.*key|api.?key/i.test(msg)) {
     if (modelAlias === 'other') return { kind: 'account', message: `Auth failed for custom endpoint. Use /endpoint <url> <model> <key> to set the API key.` };
-    if (isAxionHostedProvider(resolveProvider(modelAlias))) return { kind: 'account', message: `Invalid or revoked Sennoric credentials. Use /login or /axion-key <your-key> to authenticate.\n→ Sign up or get a key at axion.amplifiedsmp.org/keys` };
+    if (isAxionHostedProvider(resolveProvider(modelAlias))) return { kind: 'account', message: `Invalid or revoked Sennoric credentials. Use /login or /axion-key <your-key> to authenticate.\n→ Sign up or get a key at sennoric.com/keys` };
     return { kind: 'account', message: `Invalid API key for "${modelAlias}". Use /api ${modelAlias} <your-key> to set it.` };
   }
   if (status === 429 || /rate.?limit|quota/i.test(msg)) {
