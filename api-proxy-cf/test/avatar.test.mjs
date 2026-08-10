@@ -122,20 +122,20 @@ test('avatar type detection accepts PNG, JPEG, and WebP signatures but rejects S
 
 test('avatar upload requires authentication and rejects invalid or oversized payloads', async () => {
   const { env, token } = await fixture()
-  const unauthorized = await app.request('/dashboard/avatar', {
+  const unauthorized = await app.request('/account/avatar', {
     method: 'PUT',
     body: pngBytes(),
   }, env)
   assert.equal(unauthorized.status, 401)
 
-  const invalid = await app.request('/dashboard/avatar', {
+  const invalid = await app.request('/account/avatar', {
     method: 'PUT',
     headers: { Authorization: `Bearer ${token}` },
     body: '<svg></svg>',
   }, env)
   assert.equal(invalid.status, 415)
 
-  const oversized = await app.request('/dashboard/avatar', {
+  const oversized = await app.request('/account/avatar', {
     method: 'PUT',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -148,7 +148,7 @@ test('avatar upload requires authentication and rejects invalid or oversized pay
 
 test('avatar upload persists metadata and serves a versioned, hardened image response', async () => {
   const { DB, AVATARS, env, token } = await fixture()
-  const upload = await app.request('/dashboard/avatar', {
+  const upload = await app.request('/account/avatar', {
     method: 'PUT',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'image/png' },
     body: pngBytes(),
@@ -162,7 +162,7 @@ test('avatar upload persists metadata and serves a versioned, hardened image res
   assert.ok(row.avatar_updated_at)
   assert.equal(AVATARS.objects.has(row.avatar_key), true)
 
-  const account = await app.request('/dashboard/account', {
+  const account = await app.request('/account', {
     headers: { Authorization: `Bearer ${token}` },
   }, env)
   assert.equal((await account.json()).avatar_url, uploaded.avatar_url)
@@ -181,19 +181,30 @@ test('avatar upload persists metadata and serves a versioned, hardened image res
 test('replacing and removing an avatar deletes superseded R2 objects', async () => {
   const { DB, AVATARS, env, token } = await fixture()
   const headers = { Authorization: `Bearer ${token}` }
-  await app.request('/dashboard/avatar', { method: 'PUT', headers, body: pngBytes() }, env)
+  await app.request('/account/avatar', { method: 'PUT', headers, body: pngBytes() }, env)
   const firstKey = DB.prepare('SELECT avatar_key FROM users WHERE id=?').bind('user-1').first().avatar_key
 
-  await app.request('/dashboard/avatar', { method: 'PUT', headers, body: pngBytes() }, env)
+  await app.request('/account/avatar', { method: 'PUT', headers, body: pngBytes() }, env)
   const secondKey = DB.prepare('SELECT avatar_key FROM users WHERE id=?').bind('user-1').first().avatar_key
   assert.notEqual(secondKey, firstKey)
   assert.equal(AVATARS.objects.has(firstKey), false)
   assert.equal(AVATARS.objects.has(secondKey), true)
 
-  const removed = await app.request('/dashboard/avatar', { method: 'DELETE', headers }, env)
+  const removed = await app.request('/account/avatar', { method: 'DELETE', headers }, env)
   assert.equal(removed.status, 200)
   assert.equal(AVATARS.objects.has(secondKey), false)
   const row = DB.prepare('SELECT avatar_key, avatar_updated_at FROM users WHERE id=?').bind('user-1').first()
   assert.equal(row.avatar_key, null)
   assert.equal(row.avatar_updated_at, null)
+})
+
+test('the legacy /dashboard/avatar alias still uploads through the same path as /account/avatar', async () => {
+  const { env, token } = await fixture()
+  const legacyUpload = await app.request('/dashboard/avatar', {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'image/png' },
+    body: pngBytes(),
+  }, env)
+  assert.equal(legacyUpload.status, 200)
+  assert.match((await legacyUpload.json()).avatar_url, /^http:\/\/localhost\/avatars\/user-1\?v=\d+$/)
 })
