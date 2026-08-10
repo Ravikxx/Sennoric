@@ -367,7 +367,7 @@ test('a fresh account shows periods as not started, with no reset countdown, unt
   const secret = 'not-started-secret'
   addUser(db, 'fresh')
   const token = await sessionToken('fresh', secret)
-  const response = await app.request('/dashboard/account', {
+  const response = await app.request('/account', {
     headers: { Authorization: `Bearer ${token}` },
   }, { DB: db, TOKEN_SECRET: secret })
   const body = await response.json()
@@ -914,7 +914,7 @@ test('account dashboard exposes exact metered microdollars without losing small 
   ).bind(806, 194, startedAt, 194, startedAt, 'exact-user').run()
 
   const token = await sessionToken('exact-user', secret)
-  const response = await app.request('/dashboard/account', {
+  const response = await app.request('/account', {
     headers: { Authorization: `Bearer ${token}` },
   }, { DB: db, TOKEN_SECRET: secret })
   const body = await response.json()
@@ -1004,7 +1004,7 @@ test('account deletion removes audits, rate limits, and every key in an owned or
   ).run()
 
   const token = await sessionToken('member', secret)
-  const response = await app.request('/dashboard/account', {
+  const response = await app.request('/account', {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${token}` },
   }, { DB: db, TOKEN_SECRET: secret })
@@ -1549,4 +1549,16 @@ test('login timing is normalized for a nonexistent account (no early return befo
     body: JSON.stringify({ email: 'nobody@example.com', password: 'whatever' }),
   }, env)
   assert.equal(res.status, 401)
+})
+
+test('the legacy /dashboard/account alias still serves the same profile as /account', async () => {
+  const db = new D1TestDatabase()
+  const secret = 'legacy-account-alias-secret'
+  addUser(db, 'legacy-alias-user')
+  const token = await sessionToken('legacy-alias-user', secret)
+  const env = { DB: db, TOKEN_SECRET: secret }
+
+  const viaNewPath = await (await app.request('/account', { headers: { Authorization: `Bearer ${token}` } }, env)).json()
+  const viaLegacyAlias = await (await app.request('/dashboard/account', { headers: { Authorization: `Bearer ${token}` } }, env)).json()
+  assert.deepEqual(viaLegacyAlias, viaNewPath)
 })

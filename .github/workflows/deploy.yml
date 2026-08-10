@@ -1,0 +1,64 @@
+name: Deploy
+
+# Runs only after the CI workflow finishes successfully on master — a red
+# build (failing tests, npm audit, or the wrangler --dry-run check) never
+# reaches this job. Deploys api-proxy-cf to Cloudflare Workers (api.sennoric.com).
+on:
+  workflow_run:
+    workflows: [CI]
+    branches: [master]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    # workflow_run's `branches` filter only restricts which branch the
+    # *triggering* workflow ran on — it does not restrict the triggering
+    # *event*. CI also runs on pull_request, so without these explicit
+    # event/branch checks a PR-triggered CI success could reach this job and
+    # run privileged Wrangler deploy commands against untrusted PR code (the
+    # "pwn request" pattern GitHub warns about for workflow_run).
+    if: >-
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'master' &&
+      github.event.workflow_run.conclusion == 'success'
+    # Two pushes to master in quick succession can each start a Deploy run.
+    # Since `wrangler deploy` activates its version immediately, an older run
+    # finishing after a newer one would silently roll production back to
+    # stale code. Serialize runs (don't cancel the in-flight one) and, below,
+    # skip deploying if this run's commit is no longer master's actual tip.
+    concurrency:
+      group: production-worker-deploy
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api-proxy-cf
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - name: Skip if a newer commit has already landed on master
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest=$(gh api "repos/${{ github.repository }}/commits/master" --jq .sha)
+          if [ "$latest" != "${{ github.event.workflow_run.head_sha }}" ]; then
+            echo "master is now at $latest, not this run's ${{ github.event.workflow_run.head_sha }} — skipping stale deploy."
+            echo "STALE=true" >> "$GITHUB_ENV"
+          fi
+      - uses: actions/setup-node@v4
+        if: env.STALE != 'true'
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: api-proxy-cf/package-lock.json
+      - run: npm ci
+        if: env.STALE != 'true'
+      - run: npx wrangler deploy
+        if: env.STALE != 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

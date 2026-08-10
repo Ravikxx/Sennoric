@@ -42,8 +42,8 @@ async function bearer() {
 test('partial preference updates leave every unrelated switch unchanged', async () => {
   const env = makeEnv()
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${await bearer()}` }
-  const update = (body) => app.request('/dashboard/prefs', { method: 'PUT', headers, body: JSON.stringify(body) }, env)
-  const read = async () => (await app.request('/dashboard/prefs', { headers }, env)).json()
+  const update = (body) => app.request('/account/preferences', { method: 'PUT', headers, body: JSON.stringify(body) }, env)
+  const read = async () => (await app.request('/account/preferences', { headers }, env)).json()
   const values = async () => {
     const { notify_limit, notify_announcements, notify_scheduled } = await read()
     return { notify_limit, notify_announcements, notify_scheduled }
@@ -64,4 +64,12 @@ test('partial preference updates leave every unrelated switch unchanged', async 
   await update({ notify_limit: true, notify_announcements: true, notify_scheduled: true })
   await Promise.all([update({ notify_limit: false }), update({ notify_announcements: false })])
   assert.deepEqual(await values(), { notify_limit: 0, notify_announcements: 0, notify_scheduled: 1 })
+})
+
+test('the legacy /dashboard/prefs alias still serves the same data as /account/preferences', async () => {
+  const env = makeEnv()
+  const headers = { Authorization: `Bearer ${await bearer()}` }
+  const viaNewPath = await (await app.request('/account/preferences', { headers }, env)).json()
+  const viaLegacyAlias = await (await app.request('/dashboard/prefs', { headers }, env)).json()
+  assert.deepEqual(viaLegacyAlias, viaNewPath)
 })
