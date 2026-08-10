@@ -2418,7 +2418,7 @@ function Session({
               const data = await pollRes.json();
               if (data.pending) { setTimeout(poll, 2500); return; }
               if (data.token) {
-                const keyRes = await fetch(`${AXION_API}/dashboard/keys`, {
+                const keyRes = await fetch(`${AXION_API}/account/keys`, {
                   method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.token}` },
                   body: JSON.stringify({ label: `axion-cli (${new Date().toLocaleDateString()})` }),
                 });

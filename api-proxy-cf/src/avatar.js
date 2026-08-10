@@ -47,7 +47,7 @@ function unavailable(json) {
   return json({ error: 'Profile-picture storage is temporarily unavailable' }, 503)
 }
 
-export function installAvatarRoutes(app, { requireAuth, checkAccountRateLimit, json }) {
+export function installAvatarRoutes(app, { requireAuth, checkAccountRateLimit, json, legacyAlias }) {
   app.get('/avatars/:id', async (c) => {
     if (!c.env.AVATARS) return unavailable(json)
     const user = await c.env.DB.prepare(
@@ -78,7 +78,7 @@ export function installAvatarRoutes(app, { requireAuth, checkAccountRateLimit, j
     return new Response(object.body, { headers })
   })
 
-  app.put('/dashboard/avatar', async (c) => {
+  const uploadAvatar = async (c) => {
     const user = await requireAuth(c)
     if (!user) return json({ error: 'Not authenticated' }, 401)
     if (!c.env.AVATARS) return unavailable(json)
@@ -125,9 +125,11 @@ export function installAvatarRoutes(app, { requireAuth, checkAccountRateLimit, j
 
     const current = { ...user, avatar_key: key, avatar_updated_at: updatedAt }
     return json({ ok: true, avatar_url: avatarUrlForUser(c.req.url, current) })
-  })
+  }
+  app.put('/account/avatar', uploadAvatar)
+  app.put('/dashboard/avatar', legacyAlias(uploadAvatar))
 
-  app.delete('/dashboard/avatar', async (c) => {
+  const removeAvatar = async (c) => {
     const user = await requireAuth(c)
     if (!user) return json({ error: 'Not authenticated' }, 401)
     if (!c.env.AVATARS) return unavailable(json)
@@ -140,5 +142,7 @@ export function installAvatarRoutes(app, { requireAuth, checkAccountRateLimit, j
       'UPDATE users SET avatar_key=NULL, avatar_updated_at=NULL WHERE id=?'
     ).bind(user.id).run()
     return json({ ok: true, avatar_url: null })
-  })
+  }
+  app.delete('/account/avatar', removeAvatar)
+  app.delete('/dashboard/avatar', legacyAlias(removeAvatar))
 }

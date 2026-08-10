@@ -269,6 +269,21 @@ function json(data, status = 200) {
   })
 }
 
+// The old /dashboard/* routes moved to /account/* (2026-08-09) — this wraps a
+// handler so its /dashboard/* registration keeps working for one month while
+// clients update, then starts returning 410 instead of silently working
+// forever. Remove the /dashboard/* registrations (and this helper, if unused)
+// once that date has passed and every client has shipped the new paths.
+const LEGACY_DASHBOARD_ALIAS_EXPIRES_AT = new Date('2026-09-09T00:00:00Z').getTime()
+function legacyAlias(handler) {
+  return async (c) => {
+    if (Date.now() > LEGACY_DASHBOARD_ALIAS_EXPIRES_AT) {
+      return json({ error: 'This endpoint moved to /account/*. The /dashboard/* alias has expired — update your client.' }, 410)
+    }
+    return handler(c)
+  }
+}
+
 function signupRequiredResponse() {
   return json({
     error: {
@@ -1342,7 +1357,7 @@ app.post('/auth/login/app', async (c) => {
 
 // ── Dashboard ──────────────────────────────────────────────────────────────
 
-app.get('/dashboard/keys', async (c) => {
+const listApiKeys = async (c) => {
   const user = await requireAuth(c)
   if (!user) return json({ error: 'Not authenticated' }, 401)
   const { results } = await c.env.DB.prepare(
@@ -1354,18 +1369,22 @@ app.get('/dashboard/keys', async (c) => {
     }
   }
   return json({ keys: results })
-})
+}
+app.get('/account/keys', listApiKeys)
+app.get('/dashboard/keys', legacyAlias(listApiKeys))
 
-app.get('/dashboard/stats', async (c) => {
+const getApiKeyStats = async (c) => {
   const user = await requireAuth(c)
   if (!user) return json({ error: 'Not authenticated' }, 401)
   const stats = await c.env.DB.prepare(
     'SELECT COUNT(*) as total_keys, SUM(requests) as total_requests, SUM(tokens) as total_tokens FROM api_keys WHERE user_id=? AND revoked=0'
   ).bind(user.id).first()
   return json(stats)
-})
+}
+app.get('/account/keys/stats', getApiKeyStats)
+app.get('/dashboard/stats', legacyAlias(getApiKeyStats))
 
-app.post('/dashboard/keys', async (c) => {
+const createApiKey = async (c) => {
   const user = await requireAuth(c)
   if (!user) return json({ error: 'Not authenticated' }, 401)
   if (user.plan !== 'pro') {
@@ -1379,21 +1398,25 @@ app.post('/dashboard/keys', async (c) => {
   const key_value = genKey()
   await c.env.DB.prepare('INSERT INTO api_keys (id, user_id, key_value, label) VALUES (?,?,?,?)').bind(id, user.id, key_value, label || 'My Key').run()
   return json({ id, key_value, label: label || 'My Key' })
-})
+}
+app.post('/account/keys', createApiKey)
+app.post('/dashboard/keys', legacyAlias(createApiKey))
 
-app.delete('/dashboard/keys/:id', async (c) => {
+const revokeApiKey = async (c) => {
   const user = await requireAuth(c)
   if (!user) return json({ error: 'Not authenticated' }, 401)
   const result = await c.env.DB.prepare('UPDATE api_keys SET revoked=1 WHERE id=? AND user_id=?').bind(c.req.param('id'), user.id).run()
   if (result.meta.changes === 0) return json({ error: 'Key not found' }, 404)
   return json({ ok: true })
-})
+}
+app.delete('/account/keys/:id', revokeApiKey)
+app.delete('/dashboard/keys/:id', legacyAlias(revokeApiKey))
 
 // Authenticated shortcut for the same reset-password flow /auth/forgot-password
 // uses — same reset_token/reset_token_expires columns, same email, same
 // single-use + 1hr-TTL semantics — just triggered by a proven Bearer token
 // instead of an email address + Turnstile, since identity is already known.
-app.post('/dashboard/change-password/request', async (c) => {
+const requestAccountPasswordReset = async (c) => {
   const user = await requireAuth(c)
   if (!user) return json({ error: 'Not authenticated' }, 401)
   if (!await checkAccountRateLimit(c.env.DB, user.id, 'pwreset-req')) {
@@ -1409,9 +1432,11 @@ app.post('/dashboard/change-password/request', async (c) => {
     c.executionCtx.waitUntil(sendPasswordResetEmail(user.email, reset_token, c.env.RESEND_API_KEY))
   }
   return json({ ok: true })
-})
+}
+app.post('/account/password-reset', requestAccountPasswordReset)
+app.post('/dashboard/change-password/request', legacyAlias(requestAccountPasswordReset))
 
-app.get('/dashboard/account', async (c) => {
+const getAccountProfile = async (c) => {
   const user = await requireAuth(c)
   if (!user) return json({ error: 'Not authenticated' }, 401)
   const usage = await readAccountUsage(c.env.DB, user.id)
@@ -1449,16 +1474,18 @@ app.get('/dashboard/account', async (c) => {
       output_per_million_tokens_usd: LUMEN_OUTPUT_PER_M_USD,
     },
   })
-})
+}
+app.get('/account', getAccountProfile)
+app.get('/dashboard/account', legacyAlias(getAccountProfile))
 
-installAvatarRoutes(app, { requireAuth, checkAccountRateLimit, json })
+installAvatarRoutes(app, { requireAuth, checkAccountRateLimit, json, legacyAlias })
 
 // Hard-deletes the account (not a soft delete) so an old Bearer token can't
 // keep working against a row that's still technically there — requireAuth's
 // `SELECT * FROM users WHERE id=?` simply finds nothing and 401s. Child rows
 // are cleaned up first since D1/SQLite don't enforce FK constraints by
 // default and would otherwise leave orphaned data behind.
-app.delete('/dashboard/account', async (c) => {
+const deleteAccountHandler = async (c) => {
   const user = await requireAuth(c)
   if (!user) return json({ error: 'Not authenticated' }, 401)
   if (!await checkAccountRateLimit(c.env.DB, user.id, 'acct-delete', 5)) {
@@ -1532,7 +1559,9 @@ app.delete('/dashboard/account', async (c) => {
   const res = json({ ok: true })
   res.headers.set('Set-Cookie', clearSessionCookieHeader(c))
   return res
-})
+}
+app.delete('/account', deleteAccountHandler)
+app.delete('/dashboard/account', legacyAlias(deleteAccountHandler))
 
 // ── Billing (Square) ────────────────────────────────────────────────────────
 // The "Sennoric Pro" subscription plan variation in the Square catalog — see
@@ -4068,7 +4097,7 @@ app.delete('/admin/credit-codes/:id', async (c) => {
   return json({ ok: true })
 })
 
-app.put('/dashboard/keys/:id/scopes', async (c) => {
+const updateApiKeyScopes = async (c) => {
   const user = await requireAuth(c)
   if (!user) return json({ error: 'Not authenticated' }, 401)
   const { scopes } = await c.req.json().catch(() => ({}))
@@ -4077,18 +4106,22 @@ app.put('/dashboard/keys/:id/scopes', async (c) => {
   const result = await c.env.DB.prepare('UPDATE api_keys SET scopes=? WHERE id=? AND user_id=?').bind(scopesVal, c.req.param('id'), user.id).run()
   if (result.meta.changes === 0) return json({ error: 'Key not found' }, 404)
   return json({ ok: true, scopes: scopesVal ? JSON.parse(scopesVal) : null })
-})
+}
+app.put('/account/keys/:id/scopes', updateApiKeyScopes)
+app.put('/dashboard/keys/:id/scopes', legacyAlias(updateApiKeyScopes))
 
 // ── Email preferences ──────────────────────────────────────────────────────
 
-app.get('/dashboard/prefs', async (c) => {
+const getAccountPreferences = async (c) => {
   const user = await requireAuth(c)
   if (!user) return json({ error: 'Not authenticated' }, 401)
   const prefs = await c.env.DB.prepare('SELECT * FROM email_prefs WHERE user_id=?').bind(user.id).first()
   return json({ notify_limit: 1, notify_announcements: 1, notify_scheduled: 1, ...prefs, sandbox_mode: user.sandbox_mode || 'ask' })
-})
+}
+app.get('/account/preferences', getAccountPreferences)
+app.get('/dashboard/prefs', legacyAlias(getAccountPreferences))
 
-app.put('/dashboard/prefs', async (c) => {
+const updateAccountPreferences = async (c) => {
   const user = await requireAuth(c)
   if (!user) return json({ error: 'Not authenticated' }, 401)
   const { notify_limit, notify_announcements, notify_scheduled, sandbox_mode } = await c.req.json().catch(() => ({}))
@@ -4115,7 +4148,9 @@ app.put('/dashboard/prefs', async (c) => {
     await c.env.DB.prepare('UPDATE users SET sandbox_mode=? WHERE id=?').bind(sandbox_mode, user.id).run()
   }
   return json({ ok: true })
-})
+}
+app.put('/account/preferences', updateAccountPreferences)
+app.put('/dashboard/prefs', legacyAlias(updateAccountPreferences))
 
 // ── Waitlist ───────────────────────────────────────────────────────────────
 
@@ -4642,7 +4677,7 @@ app.post('/admin/status/incidents/:id/updates', async (c) => {
 
 // ── Dashboard: daily usage chart ──────────────────────────────────────────
 
-app.get('/dashboard/daily', async (c) => {
+const getAccountKeysDaily = async (c) => {
   const user = await requireAuth(c)
   if (!user) return json({ error: 'Not authenticated' }, 401)
 
@@ -4664,7 +4699,9 @@ app.get('/dashboard/daily', async (c) => {
 
   const byDate = Object.fromEntries(results.map(r => [r.date, Number(r.count)]))
   return json({ daily: days.map(d => ({ date: d, count: byDate[d] || 0 })) })
-})
+}
+app.get('/account/keys/daily', getAccountKeysDaily)
+app.get('/dashboard/daily', legacyAlias(getAccountKeysDaily))
 
 // ── Auth: device flow (CLI login) ─────────────────────────────────────────
 
