@@ -1700,10 +1700,6 @@ app.post('/webhooks/square', async (c) => {
 
 // ── Chat sync + server-owned generations (web chat app) ────────────────────
 
-const WEB_CHAT_CHART_HINT = {
-  role: 'system',
-  content: 'You can render charts. Output chart data in a ```chart code block with JSON like {"type":"bar","title":"...","data":{"labels":["A","B"],"datasets":[{"data":[1,2]}]}}. Types: bar, pie, doughnut, line.',
-}
 const ACTIVE_GENERATION_STATUSES = new Set(['queued', 'running'])
 const CHAT_JOB_TOKEN_TTL = 60 * 60 * 1000
 
@@ -3181,7 +3177,7 @@ async function startChatGeneration(env, { chatId, userId, tokenVersion = 0, mode
   const resolvedTools = webChatTools(tools)
   const requestBody = {
     model: resolvedModel,
-    messages: [WEB_CHAT_CHART_HINT, ...webChatMessages(messages)],
+    messages: webChatMessages(messages),
     ...(resolvedTools ? { tools: resolvedTools } : {}),
   }
   const id = `gen-${crypto.randomUUID()}`
