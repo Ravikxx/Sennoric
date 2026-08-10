@@ -41,6 +41,14 @@ import {
   listModerationRuns,
   setModerationDecision,
 } from './moderationAdmin.js'
+import {
+  TicketError,
+  createTicket,
+  getTicket,
+  listTickets,
+  replyToTicket,
+  setTicketStatus,
+} from './tickets.js'
 
 const app = new Hono()
 // WEB_ORIGIN/LEGACY_WEB_ORIGIN/ALLOWED_WEB_ORIGINS live in webOrigins.js so this
@@ -856,6 +864,7 @@ const RETURN_DESTINATIONS = {
   // The consent page preserves the PKCE challenge across an OAuth round-trip
   // in sessionStorage, so this destination needs no query parameters.
   desktop:    'https://sennoric.com/desktop-auth',
+  support:    'https://sennoric.com/support',
 }
 
 async function oauthFinish(c, { id_field, email, provider_id, return_to }) {
@@ -4162,6 +4171,79 @@ app.post('/waitlist', async (c) => {
 
   await c.env.DB.prepare('INSERT INTO waitlist (id, email) VALUES (?,?)').bind(crypto.randomUUID(), email.toLowerCase()).run()
   return json({ ok: true, message: "You're on the list! We'll email you when you're approved." })
+})
+
+// Support tickets. Signed-in users (Bearer token or session cookie) attach
+// their account; the "I can't sign in right now" path on the website posts
+// here with no auth at all, so this route accepts both.
+app.post('/tickets', async (c) => {
+  const user = (await requireAuth(c)) || (await sessionUserFromCookie(c))
+  const body = await c.req.json().catch(() => ({}))
+  try {
+    const ticket = await createTicket(c.env.DB, {
+      user,
+      email: body.email,
+      name: body.name,
+      subject: body.subject,
+      message: body.message,
+      category: body.category,
+    })
+    return json({ ok: true, ticket })
+  } catch (err) {
+    if (err instanceof TicketError) return json({ error: err.message }, err.status)
+    throw err
+  }
+})
+
+app.get('/admin/tickets', async (c) => {
+  const admin = await requireAdmin(c)
+  if (!admin) return json({ error: 'Forbidden' }, 403)
+  const status = c.req.query('status')
+  const tickets = await listTickets(c.env.DB, { status, limit: c.req.query('limit') })
+  return json({ tickets })
+})
+
+app.get('/admin/tickets/:id', async (c) => {
+  const admin = await requireAdmin(c)
+  if (!admin) return json({ error: 'Forbidden' }, 403)
+  try {
+    const ticket = await getTicket(c.env.DB, c.req.param('id'))
+    return json({ ticket })
+  } catch (err) {
+    if (err instanceof TicketError) return json({ error: err.message }, err.status)
+    throw err
+  }
+})
+
+app.post('/admin/tickets/:id/reply', async (c) => {
+  const admin = await requireAdmin(c)
+  if (!admin) return json({ error: 'Forbidden' }, 403)
+  const body = await c.req.json().catch(() => ({}))
+  try {
+    const ticket = await replyToTicket(c.env.DB, {
+      ticketId: c.req.param('id'),
+      reply: body.reply,
+      adminEmail: admin.email,
+      status: body.status,
+    })
+    return json({ ok: true, ticket })
+  } catch (err) {
+    if (err instanceof TicketError) return json({ error: err.message }, err.status)
+    throw err
+  }
+})
+
+app.patch('/admin/tickets/:id/status', async (c) => {
+  const admin = await requireAdmin(c)
+  if (!admin) return json({ error: 'Forbidden' }, 403)
+  const body = await c.req.json().catch(() => ({}))
+  try {
+    const ticket = await setTicketStatus(c.env.DB, { ticketId: c.req.param('id'), status: body.status })
+    return json({ ok: true, ticket })
+  } catch (err) {
+    if (err instanceof TicketError) return json({ error: err.message }, err.status)
+    throw err
+  }
 })
 
 app.get('/waitlist/accept', async (c) => {
