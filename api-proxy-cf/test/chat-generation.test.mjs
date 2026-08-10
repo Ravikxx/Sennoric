@@ -209,8 +209,8 @@ test('creating a generation persists queued status and hands server-owned work t
   assert.equal(startedJob.chatId, 'chat-1')
   assert.equal(startedJob.userId, 'user-1')
   assert.equal(startedJob.requestBody.stream, undefined)
-  assert.equal(startedJob.requestBody.messages[0].role, 'system')
-  assert.equal(startedJob.requestBody.messages[1].content, 'Hello')
+  assert.equal(startedJob.requestBody.messages[0].role, 'user')
+  assert.equal(startedJob.requestBody.messages[0].content, 'Hello')
 
   const chat = db.prepare('SELECT active_generation_id FROM chats WHERE id=?').bind('chat-1').first()
   const generation = db.prepare('SELECT status FROM chat_generations WHERE id=?').bind(body.generation.id).first()
