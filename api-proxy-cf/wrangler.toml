@@ -22,6 +22,10 @@ class_name = "BridgeRelay"
 name = "CHAT_GENERATIONS"
 class_name = "ChatGeneration"
 
+[[durable_objects.bindings]]
+name = "REMOTE_RELAY"
+class_name = "RemoteRelay"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["BridgeRelay"]
@@ -29,6 +33,10 @@ new_sqlite_classes = ["BridgeRelay"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["ChatGeneration"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["RemoteRelay"]
 
 [[routes]]
 pattern = "api.sennoric.com/*"
