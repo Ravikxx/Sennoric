@@ -13,7 +13,7 @@ test('renameChat sets customTitle without touching the rest of the saved chat', 
   t.after(() => { deleteChat(TEST_NAME); });
 
   saveChat(TEST_NAME, {
-    model: 'lumen',
+    model: 'fresco',
     mode: 'ask',
     agentHistory: [{ role: 'user', content: 'hello' }],
     displayMessages: [{ type: 'user', text: 'hello' }],

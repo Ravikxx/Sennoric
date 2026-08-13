@@ -2,11 +2,11 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  LUMEN_SYSTEM_PROMPT,
-  LUMEN_UPSTREAM_URLS,
-  probeLumenHealth,
-  proxyLumenRequest,
-} from '../src/lumen-upstream.js'
+  FRESCO_SYSTEM_PROMPT,
+  FRESCO_UPSTREAM_URLS,
+  probeFrescoHealth,
+  proxyFrescoRequest,
+} from '../src/fresco-upstream.js'
 
 const env = { RUNPOD_ENDPOINT_ID: 'ep-test', RUNPOD_API_KEY: 'rp-test-key' }
 
@@ -22,20 +22,20 @@ const completion = {
 }
 
 test('resolves the RunPod OpenAI-compatible chat and health URLs', () => {
-  assert.equal(LUMEN_UPSTREAM_URLS.chat(env), 'https://api.runpod.ai/v2/ep-test/openai/v1/chat/completions')
-  assert.equal(LUMEN_UPSTREAM_URLS.health(env), 'https://api.runpod.ai/v2/ep-test/health')
+  assert.equal(FRESCO_UPSTREAM_URLS.chat(env), 'https://api.runpod.ai/v2/ep-test/openai/v1/chat/completions')
+  assert.equal(FRESCO_UPSTREAM_URLS.health(env), 'https://api.runpod.ai/v2/ep-test/health')
 })
 
-test('sends the real served model name (vLLM has no alias for "lumen"), rewrites it back in the response', async () => {
+test('sends the real served model name (vLLM has no alias for "fresco"), rewrites it back in the response', async () => {
   let seen
   const fetchImpl = async (url, options) => {
     seen = { url, options }
     return Response.json(completion)
   }
 
-  const response = await proxyLumenRequest({ messages: [{ role: 'user', content: 'Hi' }] }, env, fetchImpl)
+  const response = await proxyFrescoRequest({ messages: [{ role: 'user', content: 'Hi' }] }, env, fetchImpl)
   assert.equal(response.status, 200)
-  assert.equal((await response.json()).model, 'lumen')
+  assert.equal((await response.json()).model, 'fresco')
   assert.equal(seen.url, 'https://api.runpod.ai/v2/ep-test/openai/v1/chat/completions')
   assert.equal(seen.options.headers.Authorization, 'Bearer rp-test-key')
 
@@ -47,10 +47,10 @@ test('prepends the baseline safety system prompt to every request, ahead of the 
   let seen
   const fetchImpl = async (url, options) => { seen = { url, options }; return Response.json(completion) }
 
-  await proxyLumenRequest({ messages: [{ role: 'user', content: 'Hi' }] }, env, fetchImpl)
+  await proxyFrescoRequest({ messages: [{ role: 'user', content: 'Hi' }] }, env, fetchImpl)
   const sent = JSON.parse(seen.options.body)
   assert.equal(sent.messages[0].role, 'system')
-  assert.equal(sent.messages[0].content, LUMEN_SYSTEM_PROMPT)
+  assert.equal(sent.messages[0].content, FRESCO_SYSTEM_PROMPT)
   assert.equal(sent.messages[1].content, 'Hi')
 })
 
@@ -58,10 +58,10 @@ test('still includes the baseline system prompt even if the caller also sent the
   let seen
   const fetchImpl = async (url, options) => { seen = { url, options }; return Response.json(completion) }
 
-  await proxyLumenRequest({ messages: [{ role: 'system', content: 'caller system' }, { role: 'user', content: 'Hi' }] }, env, fetchImpl)
+  await proxyFrescoRequest({ messages: [{ role: 'system', content: 'caller system' }, { role: 'user', content: 'Hi' }] }, env, fetchImpl)
   const sent = JSON.parse(seen.options.body)
   assert.equal(sent.messages.length, 3)
-  assert.equal(sent.messages[0].content, LUMEN_SYSTEM_PROMPT)
+  assert.equal(sent.messages[0].content, FRESCO_SYSTEM_PROMPT)
   assert.equal(sent.messages[1].content, 'caller system')
 })
 
@@ -75,12 +75,12 @@ test('asks vLLM for real usage in the final chunk when streaming, and rewrites t
     )
   }
 
-  const response = await proxyLumenRequest({ stream: true, messages: [{ role: 'user', content: 'Hi' }] }, env, fetchImpl)
+  const response = await proxyFrescoRequest({ stream: true, messages: [{ role: 'user', content: 'Hi' }] }, env, fetchImpl)
   assert.equal(response.status, 200)
   assert.equal(response.headers.get('Content-Type'), 'text/event-stream; charset=utf-8')
   const text = await response.text()
   assert.match(text, /"content":"Hi"/)
-  assert.match(text, /"model":"lumen"/)
+  assert.match(text, /"model":"fresco"/)
   assert.doesNotMatch(text, new RegExp(SERVED_MODEL_NAME.replace('/', '\\/')))
 
   const sent = JSON.parse(seen.options.body)
@@ -90,20 +90,20 @@ test('asks vLLM for real usage in the final chunk when streaming, and rewrites t
 
 test('surfaces a non-2xx RunPod response as an upstream error', async () => {
   const fetchImpl = async () => new Response('model is cold-starting', { status: 503 })
-  const response = await proxyLumenRequest({ messages: [{ role: 'user', content: 'Hi' }] }, env, fetchImpl)
+  const response = await proxyFrescoRequest({ messages: [{ role: 'user', content: 'Hi' }] }, env, fetchImpl)
   assert.equal(response.status, 503)
   assert.match(await response.text(), /model is cold-starting/)
 })
 
 test('a network failure reaching RunPod maps to a 502', async () => {
   const fetchImpl = async () => { throw new Error('fetch failed') }
-  const response = await proxyLumenRequest({ messages: [{ role: 'user', content: 'Hi' }] }, env, fetchImpl)
+  const response = await proxyFrescoRequest({ messages: [{ role: 'user', content: 'Hi' }] }, env, fetchImpl)
   assert.equal(response.status, 502)
   assert.match(await response.text(), /Could not reach Fresco/)
 })
 
 test('health probe treats scale-to-zero (a reachable but cold endpoint) as healthy', async () => {
-  assert.equal(await probeLumenHealth(env, async () => new Response('{}', { status: 200 })), true)
-  assert.equal(await probeLumenHealth(env, async () => new Response('nope', { status: 503 })), false)
-  assert.equal(await probeLumenHealth(env, async () => { throw new Error('down') }), false)
+  assert.equal(await probeFrescoHealth(env, async () => new Response('{}', { status: 200 })), true)
+  assert.equal(await probeFrescoHealth(env, async () => new Response('nope', { status: 503 })), false)
+  assert.equal(await probeFrescoHealth(env, async () => { throw new Error('down') }), false)
 })

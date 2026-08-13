@@ -74,7 +74,7 @@ test('grants are typed, inspectable, expiring, and revocable per session/reposit
   assert.deepEqual(toolNames(filterToolsForWorkspaceScope(TOOL_DEFINITIONS, 'grant-lifecycle')).sort(), [
     'agent_list', 'agent_select', 'ask_confirm', 'ask_multiple_choice', 'ask_question', 'ask_questions',
     'create_cloud_artifact', 'delete_cloud_artifact', 'end_conversation',
-    'list_tools', 'plan_read', 'plan_write', 'read_messages', 'schedule_followup',
+    'list_tools', 'list_sessions', 'plan_read', 'plan_write', 'query_session', 'read_messages', 'schedule_followup',
     'send_message', 'team_list', 'todo_add', 'todo_done', 'todo_list', 'todowrite',
     'update_cloud_artifact', 'wait', 'wait_for_message', 'workspace_list',
   ].filter((name) => TOOL_DEFINITIONS.some((tool) => tool.name === name)).sort());

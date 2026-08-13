@@ -17,8 +17,8 @@ import {
   WEEK_MS,
   WINDOW_MS,
 } from './billing.js'
-import { probeLumenHealth, proxyLumenRequest } from './lumen-upstream.js'
-import { probeVeilHealth, proxyVeilRequest } from './veil-upstream.js'
+import { probeFrescoHealth, proxyFrescoRequest } from './fresco-upstream.js'
+import { probeGlyphHealth, proxyGlyphRequest } from './glyph-upstream.js'
 import { runCode } from './sandbox.js'
 import { runStatusChecks, getStatusSnapshot } from './status.js'
 import {
@@ -1527,8 +1527,8 @@ const getAccountProfile = async (c) => {
     metering: {
       unit: 'microdollar',
       usd_per_microdollar: 0.000001,
-      input_per_million_tokens_usd: LUMEN_INPUT_PER_M_USD,
-      output_per_million_tokens_usd: LUMEN_OUTPUT_PER_M_USD,
+      input_per_million_tokens_usd: FRESCO_INPUT_PER_M_USD,
+      output_per_million_tokens_usd: FRESCO_OUTPUT_PER_M_USD,
     },
   })
 }
@@ -3262,7 +3262,7 @@ async function startChatGeneration(env, { chatId, userId, tokenVersion = 0, mode
     return { ok: false, reason: 'bad_last_role' }
   }
 
-  const resolvedModel = typeof model === 'string' && model ? model.slice(0, 100) : 'lumen'
+  const resolvedModel = typeof model === 'string' && model ? model.slice(0, 100) : 'fresco'
   const resolvedTools = webChatTools(tools)
   const resolvedInstructions = typeof instructions === 'string' ? instructions.trim().slice(0, 8_000) : ''
   const requestBody = {
@@ -3458,8 +3458,8 @@ async function purgeExpiredShares(db) {
 const FREE_KEY_CAP      = 3     // max non-revoked API keys, free plan (pro is uncapped)
 
 // Fresco pricing — also the unit the pay-as-you-go credits feature will use.
-const LUMEN_INPUT_PER_M_USD  = 0.15
-const LUMEN_OUTPUT_PER_M_USD = 0.50
+const FRESCO_INPUT_PER_M_USD  = 0.15
+const FRESCO_OUTPUT_PER_M_USD = 0.50
 
 // Usage budgets, denominated in microdollars (1,000,000 = $1) rather than raw
 // request or token counts. Request counts are a bad proxy for cost (a 5-token
@@ -3502,7 +3502,7 @@ function sandboxConfigForPlan(plan) {
 }
 
 function requestCostMicrodollars(inputTokens, outputTokens) {
-  return Math.round(inputTokens * LUMEN_INPUT_PER_M_USD + outputTokens * LUMEN_OUTPUT_PER_M_USD)
+  return Math.round(inputTokens * FRESCO_INPUT_PER_M_USD + outputTokens * FRESCO_OUTPUT_PER_M_USD)
 }
 
 // ~4 chars/token — the standard rough heuristic (same one the CLI uses
@@ -3513,8 +3513,8 @@ function estimateTokensFromChars(text) {
   return Math.ceil((text || '').length / 4)
 }
 async function proxyUpstream(body, env) {
-  if ((body.model || '').toLowerCase() === 'veil') return proxyVeilRequest(body, env)
-  return proxyLumenRequest(body, env)
+  if ((body.model || '').toLowerCase() === 'glyph') return proxyGlyphRequest(body, env)
+  return proxyFrescoRequest(body, env)
 }
 
 // Tees the body so the client gets the untouched stream immediately, while
@@ -3891,8 +3891,8 @@ app.get('/v1/models', async (c) => {
   return json({
     object: 'list',
     data: [
-      { id: 'lumen', object: 'model', created: 1750000000, owned_by: 'axion-labs' },
-      { id: 'veil', object: 'model', created: 1785536086, owned_by: 'axion-labs' },
+      { id: 'fresco', object: 'model', created: 1750000000, owned_by: 'sennoric' },
+      { id: 'glyph', object: 'model', created: 1785536086, owned_by: 'sennoric' },
     ],
   })
 })
@@ -3909,7 +3909,7 @@ app.get('/health', async (c) => {
     model_up = (await cached.json()).model_up
   } else {
     try {
-      model_up = await probeLumenHealth(c.env, fetch, 6000)
+      model_up = await probeFrescoHealth(c.env, fetch, 6000)
     } catch {
       model_up = false
     }
@@ -3917,7 +3917,7 @@ app.get('/health', async (c) => {
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'max-age=120' },
     })))
   }
-  return json({ ok: true, model: 'lumen-1.2.5', model_up })
+  return json({ ok: true, model: 'fresco-1.2.5', model_up })
 })
 
 // Public status page data: current per-service state, a 30-day uptime

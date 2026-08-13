@@ -1,8 +1,8 @@
-import { probeLumenHealth } from './lumen-upstream.js'
+import { probeFrescoHealth } from './fresco-upstream.js'
 
 export const SERVICES = [
   { key: 'axion_api', label: 'Sennoric API' },
-  { key: 'lumen', label: 'Fresco model' },
+  { key: 'fresco', label: 'Fresco model' },
   { key: 'website', label: 'Sennoric website' },
 ]
 
@@ -34,12 +34,12 @@ async function checkSennoricApi(env, appFetch) {
   }
 }
 
-async function checkLumen(env, fetchImpl) {
+async function checkFresco(env, fetchImpl) {
   try {
-    const up = await probeLumenHealth(env, fetchImpl, 8000)
-    return { service: 'lumen', status: up ? 'up' : 'down', detail: up ? '' : 'Health probe reported the model as not ready' }
+    const up = await probeFrescoHealth(env, fetchImpl, 8000)
+    return { service: 'fresco', status: up ? 'up' : 'down', detail: up ? '' : 'Health probe reported the model as not ready' }
   } catch (err) {
-    return { service: 'lumen', status: 'down', detail: String((err && err.message) || err) }
+    return { service: 'fresco', status: 'down', detail: String((err && err.message) || err) }
   }
 }
 
@@ -149,7 +149,7 @@ export async function runStatusChecks(env, fetchImpl = fetch, appFetch = fetchIm
   const nowIso = new Date().toISOString()
   const results = await Promise.all([
     checkSennoricApi(env, appFetch),
-    checkLumen(env, fetchImpl),
+    checkFresco(env, fetchImpl),
     checkWebsite(env, fetchImpl),
   ])
 
