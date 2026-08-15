@@ -1,6 +1,8 @@
 import { ALLOWED_WEB_ORIGINS } from './webOrigins.js'
 
 const COMPLETIONS_URL = 'https://api.sennoric.com/v1/chat/completions'
+const ARTIFACT_CONTENT_LIMIT = 500_000
+const ARTIFACT_KINDS = new Set(['text', 'code', 'markdown'])
 
 // Partial text is written to storage at most this often. Frequent enough that a
 // reader attaching after an eviction sees almost everything, rare enough that a
@@ -95,11 +97,13 @@ export class ChatGeneration {
     this.toolCalls = []
     this.terminal = null // { status, error } once the generation has settled
     this.persistedAt = 0
+    this.cancelRequested = false
   }
 
   async fetch(request) {
     const url = new URL(request.url)
     if (request.method === 'POST' && url.pathname === '/start') return this.start(request)
+    if (request.method === 'POST' && url.pathname === '/cancel') return this.cancel()
     if (request.method === 'GET' && url.pathname === '/stream') return this.openStream(request)
     return json({ error: 'Not found' }, 404)
   }
@@ -119,6 +123,22 @@ export class ChatGeneration {
     await this.state.storage.put('job', incoming)
     await this.state.storage.setAlarm(Date.now())
     return json({ ok: true, id: incoming.id }, 202)
+  }
+
+  async cancel() {
+    const job = await this.state.storage.get('job')
+    const terminal = this.terminal || await this.state.storage.get('terminal')
+    if (!job) {
+      return json({ ok: true, status: terminal?.status || 'cancelled' })
+    }
+
+    this.cancelRequested = true
+    await this.state.storage.put('cancelRequested', true)
+    await this.env.DB.prepare(
+      "UPDATE chat_generations SET status='cancelled', error=NULL, completed=? WHERE id=? AND user_id=? AND status IN ('queued','running')"
+    ).bind(Date.now(), job.id, job.userId).run().catch(() => {})
+    await this.settle({ status: 'cancelled' })
+    return json({ ok: true, status: 'cancelled' })
   }
 
   // Replays everything generated so far, then streams the rest live. A tab that
@@ -199,6 +219,7 @@ export class ChatGeneration {
   }
 
   async append(chunk) {
+    if (this.cancelRequested) return
     this.text += chunk
     this.broadcast('delta', { text: chunk })
     const now = Date.now()
@@ -211,6 +232,11 @@ export class ChatGeneration {
   async alarm() {
     const job = await this.state.storage.get('job')
     if (!job) return
+    this.cancelRequested = Boolean(await this.state.storage.get('cancelRequested'))
+    if (this.cancelRequested) {
+      await this.finishCancelledDrain()
+      return
+    }
 
     // The model already answered but the D1 commit failed. Retry only the
     // commit — re-running the model would charge the user a second time.
@@ -251,6 +277,33 @@ export class ChatGeneration {
       return
     }
 
+    if (this.cancelRequested) {
+      await this.finishCancelledDrain()
+      return
+    }
+
+    const artifactCalls = this.toolCalls.filter(call => call?.function?.name === 'create_cloud_artifact')
+    if (artifactCalls.length) {
+      const confirmations = []
+      for (const [index, artifactCall] of artifactCalls.entries()) {
+        if (this.cancelRequested) {
+          await this.finishCancelledDrain()
+          return
+        }
+        try {
+          confirmations.push(await this.createArtifact(job, artifactCall, index))
+        } catch (error) {
+          await this.fail(job, `Could not create the artifact: ${errorText(error)}`)
+          return
+        }
+      }
+      if (this.text && !this.text.endsWith('\n')) await this.append('\n\n')
+      await this.append(confirmations.join('\n'))
+      // The hosted worker executed these calls. Do not expose them as pending
+      // client-side tool calls, or another client could execute them again.
+      this.toolCalls = this.toolCalls.filter(call => call?.function?.name !== 'create_cloud_artifact')
+    }
+
     if (!this.text && !this.toolCalls.length) {
       await this.fail(job, 'Fresco returned an empty reply')
       return
@@ -265,6 +318,41 @@ export class ChatGeneration {
     }
     await this.state.storage.put('job', job)
     await this.commitResult(job)
+  }
+
+  async createArtifact(job, call, index = 0) {
+    let input
+    try {
+      input = JSON.parse(call?.function?.arguments || '{}')
+    } catch {
+      return 'I could not create the artifact because the generated artifact details were invalid. Please try again.'
+    }
+    if (typeof input?.content !== 'string') {
+      return 'I could not create the artifact because it had no content. Please try again.'
+    }
+    if (input.content.length > ARTIFACT_CONTENT_LIMIT) {
+      return 'I could not create the artifact because its content was too large. Please ask for a smaller artifact.'
+    }
+
+    const title = String(input.title || 'Untitled').trim().slice(0, 200) || 'Untitled'
+    const kind = ARTIFACT_KINDS.has(input.kind) ? input.kind : 'text'
+    const language = kind === 'code' && input.language ? String(input.language).slice(0, 50) : null
+    // Deterministic IDs make an alarm retry idempotent if the artifact write
+    // succeeds but Durable Object storage is interrupted before result commit.
+    const id = `artifact-${job.id}${index ? `-${index + 1}` : ''}`
+    const revisionId = `${id}-revision-1`
+    const now = Date.now()
+    await this.env.DB.batch([
+      this.env.DB.prepare(
+        'INSERT OR IGNORE INTO artifact_revisions (id, artifact_id, content, created) VALUES (?,?,?,?)'
+      ).bind(revisionId, id, input.content, now),
+      this.env.DB.prepare(
+        `INSERT OR IGNORE INTO artifacts
+         (id, user_id, project_id, chat_id, title, kind, language, latest_revision_id, created, updated)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`
+      ).bind(id, job.userId, null, job.chatId, title, kind, language, revisionId, now, now),
+    ])
+    return `Created artifact “${title}” in your Sennoric account.`
   }
 
   // Parses the upstream SSE stream, appending content deltas and accumulating
@@ -290,6 +378,7 @@ export class ChatGeneration {
         try { delta = JSON.parse(payload).choices?.[0]?.delta } catch { continue }
         if (!delta) continue
 
+        if (this.cancelRequested) continue
         if (typeof delta.content === 'string' && delta.content) await this.append(delta.content)
 
         for (const call of delta.tool_calls || []) {
@@ -307,6 +396,10 @@ export class ChatGeneration {
   }
 
   async commitResult(job) {
+    if (this.cancelRequested || await this.state.storage.get('cancelRequested')) {
+      await this.finishCancelledDrain()
+      return
+    }
     let row
     try {
       row = await this.env.DB.prepare(
@@ -367,6 +460,10 @@ export class ChatGeneration {
   }
 
   async fail(job, message) {
+    if (this.cancelRequested || await this.state.storage.get('cancelRequested')) {
+      await this.finishCancelledDrain()
+      return
+    }
     await this.env.DB.prepare(
       "UPDATE chat_generations SET status='failed', error=?, completed=? WHERE id=? AND user_id=?"
     ).bind(errorText(message), Date.now(), job.id, job.userId).run().catch(() => {})
@@ -384,5 +481,15 @@ export class ChatGeneration {
     await this.state.storage.delete('partial')
     this.broadcast(terminal.status === 'failed' ? 'error' : 'done', terminal)
     this.closeSubscribers()
+  }
+
+  async finishCancelledDrain() {
+    this.cancelRequested = true
+    if (!this.terminal) await this.settle({ status: 'cancelled' })
+    await Promise.all([
+      this.state.storage.delete('job'),
+      this.state.storage.delete('partial'),
+      this.state.storage.delete('cancelRequested'),
+    ])
   }
 }

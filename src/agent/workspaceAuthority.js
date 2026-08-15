@@ -35,6 +35,7 @@ export const GRANT_INDEPENDENT_TOOLS = new Set([
   'todo_add', 'todo_done', 'todo_list', 'todowrite', 'schedule_followup',
   'wait', 'list_tools', 'send_message',
   'read_messages', 'wait_for_message', 'team_list', 'end_conversation',
+  'list_sessions', 'query_session',
   'plan_read', 'plan_write',
   'create_cloud_artifact', 'update_cloud_artifact', 'delete_cloud_artifact',
 ]);

@@ -17,8 +17,8 @@ import {
   WEEK_MS,
   WINDOW_MS,
 } from './billing.js'
-import { probeLumenHealth, proxyLumenRequest } from './lumen-upstream.js'
-import { probeVeilHealth, proxyVeilRequest } from './veil-upstream.js'
+import { probeFrescoHealth, proxyFrescoRequest } from './fresco-upstream.js'
+import { probeGlyphHealth, proxyGlyphRequest } from './glyph-upstream.js'
 import { runCode } from './sandbox.js'
 import { runStatusChecks, getStatusSnapshot } from './status.js'
 import {
@@ -28,6 +28,7 @@ import {
 } from './auditLog.js'
 import { reviewPendingMessages } from './messageReview.js'
 export { ChatGeneration } from './chatGeneration.js'
+export { RemoteRelay } from './remoteRelay.js'
 import { avatarUrlForUser, installAvatarRoutes } from './avatar.js'
 import { WEB_ORIGIN, LEGACY_WEB_ORIGIN, ALLOWED_WEB_ORIGINS } from './webOrigins.js'
 import {
@@ -1355,6 +1356,62 @@ app.post('/auth/login/app', async (c) => {
   return json({ token: await makeToken(user.id, c.env.TOKEN_SECRET, user.token_version || 0), email: user.email })
 })
 
+// ── Client error reporting ───────────────────────────────────────────────
+// The iPhone app (and future native clients) show the user only a generic
+// "Something went wrong" and POST the real failure here for triage. Auth is
+// optional — client errors happen before sign-in too — and the report is
+// fire-and-forget from the client, so we accept it opportunistically and never
+// block on it or let a reporting failure surface to the user.
+app.post('/client/errors', async (c) => {
+  const user = await requireAuth(c) // null if no/invalid token — that's fine
+
+  let body = {}
+  try {
+    body = await c.req.json()
+  } catch {
+    body = {}
+  }
+  if (typeof body !== 'object' || body === null) body = {}
+
+  // Never trust client-sent lengths; cap every field so a malformed or
+  // oversized report can't blow up the insert or the row.
+  const truncate = (value, max) => {
+    const str = typeof value === 'string' ? value : (value == null ? '' : String(value))
+    return str.slice(0, max)
+  }
+
+  const id = bytesToHex(crypto.getRandomValues(new Uint8Array(16)))
+  const row = {
+    id,
+    user_id: user?.id || null,
+    app_version: truncate(body.app_version, 64),
+    build_number: truncate(body.build_number, 64),
+    os_version: truncate(body.os_version, 64),
+    device_model: truncate(body.device_model, 128),
+    type: truncate(body.type, 128),
+    message: truncate(body.message, 4000),
+    stack: truncate(body.stack, 16000),
+    context: truncate(body.context, 1000),
+    created_at: Date.now(),
+  }
+
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO client_errors (
+         id, user_id, app_version, build_number, os_version, device_model,
+         type, message, stack, context, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      row.id, row.user_id, row.app_version, row.build_number, row.os_version,
+      row.device_model, row.type, row.message, row.stack, row.context, row.created_at
+    ).run()
+  } catch (err) {
+    // Reporting must never break the client experience. Swallow and log.
+    console.error('client error report failed', err)
+  }
+  return json({ ok: true }, 202)
+})
+
 // ── Dashboard ──────────────────────────────────────────────────────────────
 
 const listApiKeys = async (c) => {
@@ -1470,8 +1527,8 @@ const getAccountProfile = async (c) => {
     metering: {
       unit: 'microdollar',
       usd_per_microdollar: 0.000001,
-      input_per_million_tokens_usd: LUMEN_INPUT_PER_M_USD,
-      output_per_million_tokens_usd: LUMEN_OUTPUT_PER_M_USD,
+      input_per_million_tokens_usd: FRESCO_INPUT_PER_M_USD,
+      output_per_million_tokens_usd: FRESCO_OUTPUT_PER_M_USD,
     },
   })
 }
@@ -1731,13 +1788,16 @@ function webChatMessages(messages) {
 
 // Loads one chat's messages as the same {role, content, tool_calls?,
 // tool_call_id?, ts, generation_id?} shape the old JSON blob produced, so
-// nothing downstream of this (the client, webChatMessages) has to change.
+// nothing downstream of this (the client, webChatMessages) has to change —
+// seq is a new additive field, ignored by any consumer that doesn't ask for
+// it. Clients use it to target DELETE /chats/:id/messages?from_seq= for
+// editing/regenerating a specific turn.
 async function loadMessages(db, chatId) {
   const { results } = await db.prepare(
-    'SELECT role, content, tool_calls, tool_call_id, generation_id, created_at FROM messages WHERE chat_id=? ORDER BY seq ASC'
+    'SELECT seq, role, content, tool_calls, tool_call_id, generation_id, created_at FROM messages WHERE chat_id=? ORDER BY seq ASC'
   ).bind(chatId).all()
   return results.map(row => {
-    const out = { role: row.role, content: row.content, ts: row.created_at }
+    const out = { seq: row.seq, role: row.role, content: row.content, ts: row.created_at }
     if (row.tool_calls) { try { out.tool_calls = JSON.parse(row.tool_calls) } catch {} }
     if (row.tool_call_id) out.tool_call_id = row.tool_call_id
     if (row.generation_id) out.generation_id = row.generation_id
@@ -1769,23 +1829,52 @@ async function appendMessage(db, { chatId, userId, role, content, toolCalls, too
 
 function webChatTools(tools) {
   if (!Array.isArray(tools)) return undefined
+  const safeTools = []
   const runCode = tools.find(tool => tool?.type === 'function' && tool?.function?.name === 'run_code')
-  if (!runCode) return undefined
-  return [{
-    type: 'function',
-    function: {
-      name: 'run_code',
-      description: String(runCode.function.description || '').slice(0, 12_000),
-      parameters: {
-        type: 'object',
-        properties: {
-          code: { type: 'string', description: 'Code to execute.' },
-          language: { type: 'string', enum: ['python', 'javascript'] },
+  if (runCode) {
+    safeTools.push({
+      type: 'function',
+      function: {
+        name: 'run_code',
+        description: String(runCode.function.description || '').slice(0, 12_000),
+        parameters: {
+          type: 'object',
+          properties: {
+            code: { type: 'string', description: 'Code to execute.' },
+            language: { type: 'string', enum: ['python', 'javascript'] },
+          },
+          required: ['code'],
         },
-        required: ['code'],
       },
-    },
-  }]
+    })
+  }
+
+  // Artifact creation is server-defined rather than trusting a caller-supplied
+  // schema. The generation worker is the only executor, and it only implements
+  // this one non-destructive cloud tool. This gives hosted clients the same
+  // conversational "New artifact" flow as Desktop without exposing arbitrary
+  // tool execution through the public chat endpoint.
+  if (tools.some(tool => tool?.type === 'function' && tool?.function?.name === 'create_cloud_artifact')) {
+    safeTools.push({
+      type: 'function',
+      function: {
+        name: 'create_cloud_artifact',
+        description: 'Create a new artifact in the user\'s Sennoric cloud account. Use this when the user asks to make an artifact.',
+        parameters: {
+          type: 'object',
+          properties: {
+            title: { type: 'string', description: 'Artifact title.' },
+            kind: { type: 'string', enum: ['text', 'markdown', 'code'] },
+            language: { type: 'string', description: 'Language or file extension when kind is code.' },
+            content: { type: 'string', description: 'The artifact\'s full content.' },
+          },
+          required: ['content'],
+        },
+      },
+    })
+  }
+
+  return safeTools.length ? safeTools : undefined
 }
 
 // A loose cron-shape check (5 whitespace-separated fields, each restricted
@@ -3150,7 +3239,7 @@ app.delete('/chats/:id/messages', async (c) => {
 // scheduled-task dispatcher. Returns {ok:false, reason, ...} instead of
 // throwing on any of the expected non-success cases, so callers outside an
 // HTTP request (like the dispatcher) don't need to catch a thrown Response.
-async function startChatGeneration(env, { chatId, userId, tokenVersion = 0, model, tools, scheduledDefinitionId } = {}) {
+async function startChatGeneration(env, { chatId, userId, tokenVersion = 0, model, tools, instructions, scheduledDefinitionId } = {}) {
   const row = await env.DB.prepare(
     `SELECT chats.id, chats.active_generation_id,
             generations.status AS generation_status
@@ -3173,11 +3262,15 @@ async function startChatGeneration(env, { chatId, userId, tokenVersion = 0, mode
     return { ok: false, reason: 'bad_last_role' }
   }
 
-  const resolvedModel = typeof model === 'string' && model ? model.slice(0, 100) : 'lumen'
+  const resolvedModel = typeof model === 'string' && model ? model.slice(0, 100) : 'fresco'
   const resolvedTools = webChatTools(tools)
+  const resolvedInstructions = typeof instructions === 'string' ? instructions.trim().slice(0, 8_000) : ''
   const requestBody = {
     model: resolvedModel,
-    messages: webChatMessages(messages),
+    messages: [
+      ...(resolvedInstructions ? [{ role: 'system', content: resolvedInstructions }] : []),
+      ...webChatMessages(messages),
+    ],
     ...(resolvedTools ? { tools: resolvedTools } : {}),
   }
   const id = `gen-${crypto.randomUUID()}`
@@ -3226,6 +3319,7 @@ app.post('/chats/:id/generations', async (c) => {
     tokenVersion: user.token_version || 0,
     model: request.model,
     tools: request.tools,
+    instructions: request.instructions,
   })
 
   if (!result.ok) {
@@ -3270,6 +3364,31 @@ app.get('/chats/:id/generations/:generationId/stream', async (c) => {
   return stub.fetch('https://chat-generation.internal/stream', {
     headers: { Origin: c.req.header('Origin') || '' },
   })
+})
+
+// Stops a server-owned generation without aborting the upstream response in a
+// way that could strand the model worker. The Durable Object closes viewers
+// immediately, marks the generation cancelled, drains the upstream stream,
+// and deliberately discards all remaining/partial output instead of saving it.
+app.delete('/chats/:id/generations/:generationId', async (c) => {
+  const user = await requireAuth(c)
+  if (!user) return json({ error: 'Not authenticated' }, 401)
+
+  const chatId = c.req.param('id')
+  const generationId = c.req.param('generationId')
+  const row = await c.env.DB.prepare(
+    'SELECT status FROM chat_generations WHERE id=? AND chat_id=? AND user_id=?'
+  ).bind(generationId, chatId, user.id).first()
+  if (!row) return json({ error: 'Generation not found' }, 404)
+  if (!ACTIVE_GENERATION_STATUSES.has(row.status)) {
+    return json({ ok: true, status: row.status })
+  }
+
+  const objectId = c.env.CHAT_GENERATIONS.idFromName(generationId)
+  const stub = c.env.CHAT_GENERATIONS.get(objectId)
+  const response = await stub.fetch('https://chat-generation.internal/cancel', { method: 'POST' })
+  if (!response.ok) return json({ error: 'Could not stop the reply.' }, 502)
+  return json({ ok: true, status: 'cancelled' })
 })
 
 // Soft delete: moves the chat to Trash rather than removing it. Restore with
@@ -3339,8 +3458,8 @@ async function purgeExpiredShares(db) {
 const FREE_KEY_CAP      = 3     // max non-revoked API keys, free plan (pro is uncapped)
 
 // Fresco pricing — also the unit the pay-as-you-go credits feature will use.
-const LUMEN_INPUT_PER_M_USD  = 0.15
-const LUMEN_OUTPUT_PER_M_USD = 0.50
+const FRESCO_INPUT_PER_M_USD  = 0.15
+const FRESCO_OUTPUT_PER_M_USD = 0.50
 
 // Usage budgets, denominated in microdollars (1,000,000 = $1) rather than raw
 // request or token counts. Request counts are a bad proxy for cost (a 5-token
@@ -3383,7 +3502,7 @@ function sandboxConfigForPlan(plan) {
 }
 
 function requestCostMicrodollars(inputTokens, outputTokens) {
-  return Math.round(inputTokens * LUMEN_INPUT_PER_M_USD + outputTokens * LUMEN_OUTPUT_PER_M_USD)
+  return Math.round(inputTokens * FRESCO_INPUT_PER_M_USD + outputTokens * FRESCO_OUTPUT_PER_M_USD)
 }
 
 // ~4 chars/token — the standard rough heuristic (same one the CLI uses
@@ -3394,8 +3513,8 @@ function estimateTokensFromChars(text) {
   return Math.ceil((text || '').length / 4)
 }
 async function proxyUpstream(body, env) {
-  if ((body.model || '').toLowerCase() === 'veil') return proxyVeilRequest(body, env)
-  return proxyLumenRequest(body, env)
+  if ((body.model || '').toLowerCase() === 'glyph') return proxyGlyphRequest(body, env)
+  return proxyFrescoRequest(body, env)
 }
 
 // Tees the body so the client gets the untouched stream immediately, while
@@ -3529,6 +3648,56 @@ app.post('/v1/sandbox/execute', async (c) => {
     artifacts: result.artifacts,
     timed_out: result.timedOut,
     ...(result.error ? { error: result.error } : {}),
+  })
+})
+
+// Text-to-speech, proxied to ElevenLabs so the key stays server-side —
+// iOS's SpeechOutputController calls this instead of the on-device
+// AVSpeechSynthesizer voice (BACKLOG.md item #8's "real fix"). Requires a
+// signed-in account, same as everything else here; no separate API-key path
+// since this isn't part of the public chat-completions surface.
+const ELEVENLABS_DEFAULT_VOICE_ID = '21m00Tcm4TlvDq8ikWAM' // "Rachel", a stock ElevenLabs voice
+const ELEVENLABS_MAX_CHARACTERS = 4000
+
+app.post('/tts', async (c) => {
+  const user = await requireAuth(c)
+  if (!user) return json({ error: 'Not authenticated' }, 401)
+
+  const body = await c.req.json().catch(() => ({}))
+  const text = typeof body.text === 'string' ? body.text.trim() : ''
+  if (!text) return json({ error: 'Missing text' }, 400)
+  if (text.length > ELEVENLABS_MAX_CHARACTERS) {
+    return json({ error: `Text is too long (max ${ELEVENLABS_MAX_CHARACTERS} characters)` }, 413)
+  }
+  const voiceId = typeof body.voice_id === 'string' && body.voice_id ? body.voice_id : ELEVENLABS_DEFAULT_VOICE_ID
+
+  let upstream
+  try {
+    upstream = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`, {
+      method: 'POST',
+      headers: {
+        'xi-api-key': c.env.ELEVENLABS_API_KEY,
+        'Content-Type': 'application/json',
+        Accept: 'audio/mpeg',
+      },
+      body: JSON.stringify({
+        text,
+        model_id: 'eleven_turbo_v2_5',
+        voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+      }),
+    })
+  } catch (error) {
+    return json({ error: `Could not reach ElevenLabs: ${error.message}` }, 502)
+  }
+
+  if (!upstream.ok) {
+    const detail = await upstream.text().catch(() => '')
+    return json({ error: `ElevenLabs rejected the request: ${detail}` }, upstream.status)
+  }
+
+  return new Response(upstream.body, {
+    status: 200,
+    headers: { 'Content-Type': 'audio/mpeg' },
   })
 })
 
@@ -3722,8 +3891,8 @@ app.get('/v1/models', async (c) => {
   return json({
     object: 'list',
     data: [
-      { id: 'lumen', object: 'model', created: 1750000000, owned_by: 'axion-labs' },
-      { id: 'veil', object: 'model', created: 1785536086, owned_by: 'axion-labs' },
+      { id: 'fresco', object: 'model', created: 1750000000, owned_by: 'sennoric' },
+      { id: 'glyph', object: 'model', created: 1785536086, owned_by: 'sennoric' },
     ],
   })
 })
@@ -3740,7 +3909,7 @@ app.get('/health', async (c) => {
     model_up = (await cached.json()).model_up
   } else {
     try {
-      model_up = await probeLumenHealth(c.env, fetch, 6000)
+      model_up = await probeFrescoHealth(c.env, fetch, 6000)
     } catch {
       model_up = false
     }
@@ -3748,7 +3917,7 @@ app.get('/health', async (c) => {
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'max-age=120' },
     })))
   }
-  return json({ ok: true, model: 'lumen-1.2.5', model_up })
+  return json({ ok: true, model: 'fresco-1.2.5', model_up })
 })
 
 // Public status page data: current per-service state, a 30-day uptime
@@ -5057,6 +5226,93 @@ export class BridgeRelay {
     for (const app of this.apps) { try { app.send(msg) } catch {} }
   }
 }
+
+// ── Remote: phone <-> desktop code-agent pairing relay ───────────────────────
+//
+// The desktop app creates a pairing (POST /remote/pair/init) and shows a QR
+// encoding the pairing id. The iPhone scans it, then both ends open a
+// WebSocket to /remote/ws (role=host / role=client). The RemoteRelay DO
+// forwards the JSON protocol between them. Ownership is enforced here: only
+// the account that created the pairing may connect as host or client.
+
+const REMOTE_PAIRING_TTL_MS = 10 * 60 * 1000
+
+async function ensureRemotePairingsTable(c) {
+  await c.env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS remote_pairings (
+       pairing_id TEXT PRIMARY KEY,
+       user_id TEXT NOT NULL,
+       created_at INTEGER NOT NULL,
+       expires_at INTEGER NOT NULL
+     )`
+  ).run()
+}
+
+app.post('/remote/pair/init', async (c) => {
+  const user = await requireAuth(c)
+  if (!user) return json({ error: 'Not authenticated' }, 401)
+
+  await ensureRemotePairingsTable(c)
+
+  const pairingId = crypto.randomUUID()
+  const now = Date.now()
+  const expiresAt = now + REMOTE_PAIRING_TTL_MS
+  await c.env.DB.prepare(
+    'INSERT INTO remote_pairings (pairing_id, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)'
+  ).bind(pairingId, user.id, now, expiresAt).run()
+
+  return json({ pairingId, qrPayload: `sennoric-remote://${pairingId}`, expiresAt })
+})
+
+app.get('/remote/pair/:id', async (c) => {
+  const user = await requireAuth(c)
+  if (!user) return json({ error: 'Not authenticated' }, 401)
+  const row = await c.env.DB.prepare(
+    'SELECT pairing_id, user_id, expires_at FROM remote_pairings WHERE pairing_id=?'
+  ).bind(c.req.param('id')).first()
+  if (!row) return json({ error: 'Pairing not found' }, 404)
+  if (row.user_id !== user.id) return json({ error: 'Forbidden' }, 403)
+  return json({ pairingId: row.pairing_id, expired: row.expires_at < Date.now() })
+})
+
+app.delete('/remote/pair/:id', async (c) => {
+  const user = await requireAuth(c)
+  if (!user) return json({ error: 'Not authenticated' }, 401)
+  const row = await c.env.DB.prepare(
+    'SELECT user_id FROM remote_pairings WHERE pairing_id=?'
+  ).bind(c.req.param('id')).first()
+  if (!row) return json({ error: 'Pairing not found' }, 404)
+  if (row.user_id !== user.id) return json({ error: 'Forbidden' }, 403)
+  await c.env.DB.prepare('DELETE FROM remote_pairings WHERE pairing_id=?').bind(c.req.param('id')).run()
+  return json({ ok: true })
+})
+
+app.get('/remote/ws', async (c) => {
+  const upgrade = c.req.header('Upgrade') || ''
+  if (upgrade.toLowerCase() !== 'websocket') return json({ error: 'Expected websocket upgrade' }, 426)
+
+  const user = await requireAuth(c)
+  if (!user) return json({ error: 'Not authenticated' }, 401)
+
+  const pairingId = c.req.query('pairing')
+  if (!pairingId) return json({ error: 'Missing pairing id' }, 400)
+
+  const row = await c.env.DB.prepare(
+    'SELECT user_id, expires_at FROM remote_pairings WHERE pairing_id=?'
+  ).bind(pairingId).first()
+  if (!row) return json({ error: 'Pairing not found' }, 404)
+  if (row.user_id !== user.id) return json({ error: 'Forbidden' }, 403)
+  if (row.expires_at < Date.now()) return json({ error: 'Pairing expired' }, 410)
+
+  const role = c.req.query('role') === 'host' ? 'host' : 'client'
+  const id = c.env.REMOTE_RELAY.idFromName(pairingId)
+  const stub = c.env.REMOTE_RELAY.get(id)
+
+  const url = new URL(c.req.url)
+  url.searchParams.set('role', role)
+  url.searchParams.set('expiresAt', String(row.expires_at))
+  return stub.fetch(new Request(url, c.req.raw))
+})
 
 // One digest email per review run (not one per flagged row) to every admin —
 // admin_allowlist is already the "who has admin dashboard access" list, and

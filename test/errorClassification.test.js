@@ -8,12 +8,12 @@ import { ProviderError } from '../src/utils/namedError.js';
 // states." Every case here also checks the message text is unchanged from
 // the pre-split friendlyError(), since real CLI users depend on that wording.
 
-test('a 401 response classifies as account, with Sennoric-hosted-specific guidance for lumen and veil', () => {
-  // lumen/veil authenticate with the account's own Sennoric sign-in, never a
+test('a 401 response classifies as account, with Sennoric-hosted-specific guidance for fresco and glyph', () => {
+  // fresco/glyph authenticate with the account's own Sennoric sign-in, never a
   // third-party API key — "revoked API key" wording was wrong for these
-  // two specifically (reported live: "Access denied for veil" while
+  // two specifically (reported live: "Access denied for glyph" while
   // signed in, no API key ever configured).
-  for (const alias of ['lumen', 'veil']) {
+  for (const alias of ['fresco', 'glyph']) {
     const { kind, message } = classifyProviderError({ status: 401, message: 'unauthorized' }, alias);
     assert.equal(kind, 'account');
     assert.match(message, /Invalid or revoked Sennoric credentials/);
@@ -29,7 +29,7 @@ test('a 401 for a generic provider classifies as account with provider-specific 
 
 test('a 429 with a weekly-allowance message classifies as quota', () => {
   const err = { status: 429, message: 'weekly allowance reached', error: { limit_usd: 5 } };
-  const { kind, message } = classifyProviderError(err, 'lumen');
+  const { kind, message } = classifyProviderError(err, 'fresco');
   assert.equal(kind, 'quota');
   assert.match(message, /weekly allowance reached/i);
   assert.match(message, /\$5\.00/);
@@ -37,7 +37,7 @@ test('a 429 with a weekly-allowance message classifies as quota', () => {
 
 test('a 429 with a window-scoped error classifies as quota', () => {
   const err = { status: 429, message: 'rate limited', error: { window: true, reset_at: new Date(Date.now() + 60_000).toISOString() } };
-  const { kind, message } = classifyProviderError(err, 'lumen');
+  const { kind, message } = classifyProviderError(err, 'fresco');
   assert.equal(kind, 'quota');
   assert.match(message, /two-hour allowance reached/i);
 });
@@ -56,13 +56,13 @@ test('a 403 classifies as account by default', () => {
 
 test('a 403 mentioning account suspension classifies as safety, not account', () => {
   const err = { status: 403, message: 'Your account has been suspended.' };
-  const { kind, message } = classifyProviderError(err, 'lumen');
+  const { kind, message } = classifyProviderError(err, 'fresco');
   assert.equal(kind, 'safety');
   assert.match(message, /suspended/i);
 });
 
-test('a 403 for lumen/veil never tells the user to check an "API key"', () => {
-  for (const alias of ['lumen', 'veil']) {
+test('a 403 for fresco/glyph never tells the user to check an "API key"', () => {
+  for (const alias of ['fresco', 'glyph']) {
     const { kind, message } = classifyProviderError({ status: 403, message: 'forbidden' }, alias);
     assert.equal(kind, 'account');
     assert.match(message, /Access denied/);
@@ -80,24 +80,24 @@ test('a 403 for a hosted model appends the Worker-relayed upstream detail, when 
   const err = {
     status: 403,
     message: '403 Forbidden',
-    error: { message: 'Veil rejected the request: endpoint access denied' },
+    error: { message: 'Glyph rejected the request: endpoint access denied' },
   };
-  const { kind, message } = classifyProviderError(err, 'veil');
+  const { kind, message } = classifyProviderError(err, 'glyph');
   assert.equal(kind, 'account');
   assert.match(message, /Sennoric account/);
-  assert.match(message, /Veil rejected the request: endpoint access denied/);
+  assert.match(message, /Glyph rejected the request: endpoint access denied/);
 });
 
 test('a 403 with no distinct upstream detail does not append a redundant/empty parenthetical', () => {
-  const { kind, message } = classifyProviderError({ status: 403, message: 'forbidden' }, 'lumen');
+  const { kind, message } = classifyProviderError({ status: 403, message: 'forbidden' }, 'fresco');
   assert.equal(kind, 'account');
   assert.doesNotMatch(message, /\(\s*\)/);
   assert.doesNotMatch(message, /\(forbidden\)/);
 });
 
 test('a 500/503 classifies as availability', () => {
-  assert.equal(classifyProviderError({ status: 500 }, 'lumen').kind, 'availability');
-  assert.equal(classifyProviderError({ status: 503 }, 'lumen').kind, 'availability');
+  assert.equal(classifyProviderError({ status: 500 }, 'fresco').kind, 'availability');
+  assert.equal(classifyProviderError({ status: 503 }, 'fresco').kind, 'availability');
 });
 
 test('a 500 for gemini keeps its model-name-specific guidance and classifies as availability', () => {
@@ -113,10 +113,10 @@ test('an unrecognized error classifies as unknown', () => {
 });
 
 test('a missing-credential ProviderError (no status) classifies as account', () => {
-  const err = new ProviderError({ provider: 'lumen', message: 'Lumen requires an Sennoric account and API key — use /login, or set a key with /axion-key <your-key>.' });
-  const { kind, message } = classifyProviderError(err, 'lumen');
+  const err = new ProviderError({ provider: 'fresco', message: 'Fresco requires a Sennoric account and API key — use /login, or set a key with /axion-key <your-key>.' });
+  const { kind, message } = classifyProviderError(err, 'fresco');
   assert.equal(kind, 'account');
-  assert.match(message, /requires an Sennoric account/);
+  assert.match(message, /requires a Sennoric account/);
 });
 
 test('a ProviderError that does carry a status is still classified by it', () => {

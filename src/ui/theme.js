@@ -3,7 +3,7 @@
 
 export const THEMES = {
   ember:  { accent: '#cc785c', desc: 'warm clay — the default' },
-  violet: { accent: '#a78bfa', desc: 'soft purple, matches Lumen' },
+  violet: { accent: '#a78bfa', desc: 'soft purple, matches Fresco' },
   ocean:  { accent: '#60a5fa', desc: 'calm blue' },
   jade:   { accent: '#34d399', desc: 'green terminal classic' },
   rose:   { accent: '#fb7185', desc: 'warm pink' },

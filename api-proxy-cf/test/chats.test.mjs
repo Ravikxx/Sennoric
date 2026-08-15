@@ -224,6 +224,9 @@ test('PUT creates a chat, POST appends messages one at a time, GET returns them 
     ['user', 'Hi'],
     ['assistant', 'Hello back'],
   ])
+  // seq is what clients target with DELETE .../messages?from_seq= to edit
+  // or regenerate a specific turn — GET must return it per message.
+  assert.deepEqual(body.messages.map(m => m.seq), [1, 2])
 })
 
 test('POST to a chat owned by another user is rejected', async () => {
@@ -677,6 +680,33 @@ test('POST /projects creates a project, GET /projects lists it with a chat_count
   assert.equal(body.projects.length, 1)
   assert.equal(body.projects[0].id, created.id)
   assert.equal(body.projects[0].chat_count, 0)
+})
+
+test('GET /projects keeps same-named projects separate and counts only their own chats', async () => {
+  const { db, env, headers } = await setup()
+  db.prepare('INSERT INTO projects (id, user_id, name, created, updated) VALUES (?,?,?,?,?)')
+    .bind('proj-a', 'user-1', 'iPhone App', 1, 20).run()
+  db.prepare('INSERT INTO projects (id, user_id, name, created, updated) VALUES (?,?,?,?,?)')
+    .bind('proj-b', 'user-1', 'iPhone App', 1, 10).run()
+  db.prepare('INSERT INTO projects (id, user_id, name, created, updated) VALUES (?,?,?,?,?)')
+    .bind('proj-other-user', 'user-2', 'iPhone App', 1, 30).run()
+  db.prepare('INSERT INTO chats (id, user_id, title, updated, created, project_id) VALUES (?,?,?,?,?,?)')
+    .bind('chat-a-1', 'user-1', 'A1', 1, 1, 'proj-a').run()
+  db.prepare('INSERT INTO chats (id, user_id, title, updated, created, project_id) VALUES (?,?,?,?,?,?)')
+    .bind('chat-a-2', 'user-1', 'A2', 1, 1, 'proj-a').run()
+  db.prepare('INSERT INTO chats (id, user_id, title, updated, created, project_id) VALUES (?,?,?,?,?,?)')
+    .bind('chat-b-1', 'user-1', 'B1', 1, 1, 'proj-b').run()
+
+  const response = await app.request('/projects', { headers }, env)
+  assert.equal(response.status, 200)
+  const body = await response.json()
+  assert.deepEqual(
+    body.projects.map(project => ({ id: project.id, chat_count: project.chat_count })),
+    [
+      { id: 'proj-a', chat_count: 2 },
+      { id: 'proj-b', chat_count: 1 },
+    ]
+  )
 })
 
 test('creating a project with an empty name is rejected', async () => {

@@ -16,6 +16,7 @@ import { StreamingToolExecutor } from '../services/tools/toolExecutor.js';
 import { allConcurrentSafe } from '../services/tools/toolOrchestration.js';
 import { resolveNextFallback, isRateLimitError } from './providerFallback.js';
 import { BUS } from './bus.js';
+import { registerSession, updateSession, trackToolFiles } from './sessionRegistry.js';
 import { getMemories, getLearnedInstructions, getSkills, getAutoMemory, captureSnapshot, getCurrentPlanPath, readPlanFile } from '../persist.js';
 import { initWiki, wikiIsInitialized } from '../services/wiki/init.js';
 import { wikiContent } from '../services/wiki/status.js';
@@ -158,7 +159,7 @@ function buildUserContent(text, cwd, workspaceRoot) {
   ];
 }
 
-const SYSTEM_PROMPT = `You are Sennoric, an expert AI coding agent made by Sennoric Labs. You help users write, debug, and understand code directly in their terminal.
+const SYSTEM_PROMPT = `You are Sennoric, an expert AI coding agent made by Sennoric. You help users write, debug, and understand code directly in their terminal.
 
 You have access to tools that let you read/write files, run commands, work with git, and search the web. Always explain what you're about to do before taking an action. Be concise but thorough. When you encounter an error, explain what went wrong and how you're fixing it.
 
@@ -177,7 +178,7 @@ CHART OUTPUT: When the user asks for a chart (bar, pie, doughnut, or line), outp
 \`\`\`
 Supported types: bar (default), pie, doughnut, line, scatter, radar. Labels and colors are optional — the frontend provides defaults.`;
 
-const CHAT_SYSTEM_PROMPT = `You are Sennoric, a helpful AI assistant made by Sennoric Labs. You are having a conversation — help with questions, writing, brainstorming, explaining concepts, and general topics.
+const CHAT_SYSTEM_PROMPT = `You are Sennoric, a helpful AI assistant made by Sennoric. You are having a conversation — help with questions, writing, brainstorming, explaining concepts, and general topics.
 
 You are in Chat mode. You have no access to files, the terminal, or any tools. Just talk. Be friendly, clear, and concise.
 
@@ -303,7 +304,7 @@ class ThinkStreamFilter {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Sennoric-hosted models (lumen/veil) run on a shared RunPod/vLLM instance whose
+// Sennoric-hosted models (fresco/glyph) run on a shared RunPod/vLLM instance whose
 // guided-decoding tool-schema compiler breaks down — an HTTP 200 with a
 // completely empty streamed body, no error at all — once the combined
 // request (system prompt + tool schemas) crosses some complexity ceiling.
@@ -331,15 +332,16 @@ const HOSTED_SMALL_MODEL_TOOL_NAMES = new Set([
   'ask_question', 'ask_confirm',
   'todo_add', 'todo_list',
   'create_cloud_artifact', 'update_cloud_artifact', 'delete_cloud_artifact',
+  'list_sessions', 'query_session',
 ]);
 
-// lumen/veil authenticate with the account's own Sennoric sign-in (a session
+// fresco/glyph authenticate with the account's own Sennoric sign-in (a session
 // token or axion-sk- key resolved via resolveAxionAuth in models.js), never
 // a third-party "API key" in the way every other provider means that term —
 // error messages that tell the user to check an "API key" are simply wrong
-// for these two and need their own wording wherever provider errors surface.
+// for these and need their own wording wherever provider errors surface.
 function isAxionHostedProvider(provider) {
-  return provider === 'lumen' || provider === 'veil';
+  return provider === 'sennoric';
 }
 
 function restrictToolsForHostedModel(tools, modelAlias) {
@@ -419,6 +421,8 @@ export class Agent {
     this.onNotify      = onNotify      || ((n) => this.onMessage(n));
 
     BUS.register(label);
+    // Register this session so peers can discover it and get a creation notice.
+    registerSession(this.label, { model: this.modelAlias });
 
     // LSP initialized lazily on first tool call — no startup cost
     this._lspInitialized = false;
@@ -488,7 +492,7 @@ export class Agent {
   setComputerUse(enabled)  { this.computerUse = !!enabled; }
 
   // this.computerUse alone isn't enough to gate anything computer-use
-  // related — hosted models (lumen/veil) never get the actual tools (see
+  // related — hosted models (fresco/glyph) never get the actual tools (see
   // restrictToolsForHostedModel), so telling them the tools exist anyway
   // (system prompt, tool-fallback prompt) would have them hallucinate calls
   // to tools that were never sent. Every computer-use-conditional spot
@@ -760,6 +764,7 @@ CRITICAL RULES — follow these exactly:
     this._activateSkills(userMessage);
     // Set think reminder if the user's message asks for reasoning
     this._thinkReminder = /\bthink(?:ing)?\b|\breason(?:ing)?\b|\bconsider\b|\breflect\b|\bponder\b/i.test(userMessage);
+    this.currentTask = userMessage;
 
     // Token budget — detect "+500k", "+2m", or "use 2M tokens" in the user's
     // prompt. Strip the budget syntax (the budget is for the system, not the
@@ -858,6 +863,9 @@ CRITICAL RULES — follow these exactly:
   async _agentLoop(askConfirm, askUser) {
     const MAX = 20;
     let iterations = 0;
+    // Surface this session's current goal/status to peers (used by the
+    // list_sessions / query_session tools so other sessions can coordinate).
+    updateSession(this.label, { status: 'working', goal: this.currentTask || '', model: this.modelAlias });
     let lastBatchSig = null;
     let sameToolStreak = 0;
     let adviceSent = false;
@@ -1086,6 +1094,9 @@ CRITICAL RULES — follow these exactly:
                 approvalGranted: userApproved,
                 signal,
               });
+              // Track files this session touches so peers can coordinate via
+              // list_sessions / query_session and avoid editing the same paths.
+              trackToolFiles(this.label, name, beforeCtx.input);
               const afterCtx = await PLUGINS.dispatch('tool.execute.after', { tool: name, input: beforeCtx.input, result, agentLabel: this.label });
               result = afterCtx.result || result;
             }
@@ -1613,7 +1624,6 @@ One word only:`;
           const model = resolveModel(this.modelAlias);
           let r;
           if (type === 'anthropic') r = await this._callAnthropic(client, model);
-          else if (type === 'veil') r = await this._callVeil(client, model);
           else r = await this._callOpenAI(client, model);
           if (r && !r.text && (!r.toolCalls || !r.toolCalls.length)) {
             throw new Error('Model returned empty response — retrying');
@@ -1895,10 +1905,6 @@ One word only:`;
     };
   }
 
-  async _callVeil(client, model) {
-    return this._callOpenAI(client, model);
-  }
-
   // ── History helpers ───────────────────────────────────────────────────────
 
   _historyToOpenAI() {
@@ -2087,8 +2093,8 @@ export function classifyProviderError(err, modelAlias) {
   if (status === 429 || /rate.?limit|quota/i.test(msg)) {
     const resetStr = errObj.reset_at ? ` Resets ${formatResetTime(errObj.reset_at)}.` : '';
     const limitStr = Number.isFinite(Number(errObj.limit_usd)) ? ` ($${Number(errObj.limit_usd).toFixed(2)} included usage)` : '';
-    if (errObj.window)    return { kind: 'quota', message: `Lumen two-hour allowance reached${limitStr} and no API credits remain.${resetStr}` };
-    if (/weekly/i.test(msg)) return { kind: 'quota', message: `Lumen weekly allowance reached${limitStr} and no API credits remain.${resetStr}` };
+    if (errObj.window)    return { kind: 'quota', message: `Sennoric two-hour allowance reached${limitStr} and no API credits remain.${resetStr}` };
+    if (/weekly/i.test(msg)) return { kind: 'quota', message: `Sennoric weekly allowance reached${limitStr} and no API credits remain.${resetStr}` };
     return { kind: 'quota', message: `Rate limited by "${modelAlias}".${resetStr || ' Wait a moment and try again.'}` };
   }
   if (status === 404 || /model.*not.*found|no.*model/i.test(msg)) {

@@ -27,3 +27,6 @@ extension.pem
 ModelReport.md
 session-*.md
 .claude/settings.json
+
+# local backups (never commit)
+api-proxy-cf.backup-*/

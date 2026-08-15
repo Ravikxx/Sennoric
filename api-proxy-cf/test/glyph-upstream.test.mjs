@@ -2,10 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  VEIL_UPSTREAM_URLS,
-  probeVeilHealth,
-  proxyVeilRequest,
-} from '../src/veil-upstream.js'
+  GLYPH_UPSTREAM_URLS,
+  probeGlyphHealth,
+  proxyGlyphRequest,
+} from '../src/glyph-upstream.js'
 
 const env = { RUNPOD_VEIL_ENDPOINT_ID: 'ep-veil-test', RUNPOD_API_KEY: 'rp-test-key' }
 
@@ -21,20 +21,20 @@ const completion = {
 }
 
 test('resolves the RunPod OpenAI-compatible chat and health URLs', () => {
-  assert.equal(VEIL_UPSTREAM_URLS.chat(env), 'https://api.runpod.ai/v2/ep-veil-test/openai/v1/chat/completions')
-  assert.equal(VEIL_UPSTREAM_URLS.health(env), 'https://api.runpod.ai/v2/ep-veil-test/health')
+  assert.equal(GLYPH_UPSTREAM_URLS.chat(env), 'https://api.runpod.ai/v2/ep-veil-test/openai/v1/chat/completions')
+  assert.equal(GLYPH_UPSTREAM_URLS.health(env), 'https://api.runpod.ai/v2/ep-veil-test/health')
 })
 
-test('sends the real served model name (vLLM has no alias for "veil"), rewrites it back in the response', async () => {
+test('sends the real served model name (vLLM has no alias for "glyph"), rewrites it back in the response', async () => {
   let seen
   const fetchImpl = async (url, options) => {
     seen = { url, options }
     return Response.json(completion)
   }
 
-  const response = await proxyVeilRequest({ messages: [{ role: 'user', content: 'Hi' }] }, env, fetchImpl)
+  const response = await proxyGlyphRequest({ messages: [{ role: 'user', content: 'Hi' }] }, env, fetchImpl)
   assert.equal(response.status, 200)
-  assert.equal((await response.json()).model, 'veil')
+  assert.equal((await response.json()).model, 'glyph')
   assert.equal(seen.url, 'https://api.runpod.ai/v2/ep-veil-test/openai/v1/chat/completions')
   assert.equal(seen.options.headers.Authorization, 'Bearer rp-test-key')
 
@@ -52,12 +52,12 @@ test('asks vLLM for real usage in the final chunk when streaming, and rewrites t
     )
   }
 
-  const response = await proxyVeilRequest({ stream: true, messages: [{ role: 'user', content: 'Hi' }] }, env, fetchImpl)
+  const response = await proxyGlyphRequest({ stream: true, messages: [{ role: 'user', content: 'Hi' }] }, env, fetchImpl)
   assert.equal(response.status, 200)
   assert.equal(response.headers.get('Content-Type'), 'text/event-stream; charset=utf-8')
   const text = await response.text()
   assert.match(text, /"content":"Hi"/)
-  assert.match(text, /"model":"veil"/)
+  assert.match(text, /"model":"glyph"/)
   assert.doesNotMatch(text, new RegExp(SERVED_MODEL_NAME.replace(/[/:]/g, '\\$&')))
 
   const sent = JSON.parse(seen.options.body)
@@ -67,20 +67,20 @@ test('asks vLLM for real usage in the final chunk when streaming, and rewrites t
 
 test('surfaces a non-2xx RunPod response as an upstream error', async () => {
   const fetchImpl = async () => new Response('model is cold-starting', { status: 503 })
-  const response = await proxyVeilRequest({ messages: [{ role: 'user', content: 'Hi' }] }, env, fetchImpl)
+  const response = await proxyGlyphRequest({ messages: [{ role: 'user', content: 'Hi' }] }, env, fetchImpl)
   assert.equal(response.status, 503)
   assert.match(await response.text(), /model is cold-starting/)
 })
 
 test('a network failure reaching RunPod maps to a 502', async () => {
   const fetchImpl = async () => { throw new Error('fetch failed') }
-  const response = await proxyVeilRequest({ messages: [{ role: 'user', content: 'Hi' }] }, env, fetchImpl)
+  const response = await proxyGlyphRequest({ messages: [{ role: 'user', content: 'Hi' }] }, env, fetchImpl)
   assert.equal(response.status, 502)
   assert.match(await response.text(), /Could not reach Glyph/)
 })
 
 test('health probe treats scale-to-zero (a reachable but cold endpoint) as healthy', async () => {
-  assert.equal(await probeVeilHealth(env, async () => new Response('{}', { status: 200 })), true)
-  assert.equal(await probeVeilHealth(env, async () => new Response('nope', { status: 503 })), false)
-  assert.equal(await probeVeilHealth(env, async () => { throw new Error('down') }), false)
+  assert.equal(await probeGlyphHealth(env, async () => new Response('{}', { status: 200 })), true)
+  assert.equal(await probeGlyphHealth(env, async () => new Response('nope', { status: 503 })), false)
+  assert.equal(await probeGlyphHealth(env, async () => { throw new Error('down') }), false)
 })

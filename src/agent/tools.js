@@ -1028,6 +1028,27 @@ export const TOOL_DEFINITIONS = [
       required: ['id'],
     },
   },
+  {
+    name: 'list_sessions',
+    description: 'List other live Sennoric sessions (concurrent code chats / spawned agents) running in this process. Returns each peer\'s label, model, current goal, status, and activity times so you can coordinate and avoid working on the same files. Does not include your own session.',
+    input_schema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'query_session',
+    description: 'Ask another live session what it is doing so you can coordinate and avoid conflicts. Returns that session\'s current goal and status. If `question` is provided, it is delivered to that session\'s inbox so it can answer on its next turn via read_messages.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        session_id: { type: 'string', description: 'Label of the peer session to query (from list_sessions)' },
+        question:    { type: 'string', description: 'Optional question to send the peer (e.g. "which files are you editing?")' },
+      },
+      required: ['session_id'],
+    },
+  },
 ];
 
 export const TOOL_DEFINITIONS_OPENAI = TOOL_DEFINITIONS.map((t) => ({
@@ -2467,6 +2488,40 @@ export async function executeTool(name, input, {
           }
         }
         return { success: true, output: `Wiki search results for "${input.query}":\n\n${lines.join('\n')}` };
+      }
+
+      case 'list_sessions': {
+        const { listSessions } = await import('./sessionRegistry.js');
+        const peers = listSessions(agentLabel);
+        if (!peers.length) return { success: true, output: 'No other live sessions. You are the only active session.' };
+        const lines = peers.map((p) => {
+          const when = new Date(p.lastActivity).toLocaleTimeString();
+          return `- ${p.label} (model: ${p.model}, status: ${p.status}, last active ${when})${p.goal ? `\n    goal: ${p.goal}` : ''}`;
+        });
+        return { success: true, output: `Other live sessions (${peers.length}):\n${lines.join('\n')}` };
+      }
+
+      case 'query_session': {
+        const { getSession, updateSession } = await import('./sessionRegistry.js');
+        const target = input.session_id;
+        if (!target) return { success: false, output: 'session_id is required.' };
+        const peer = getSession(target);
+        if (!peer) return { success: false, output: `No live session "${target}". Use list_sessions to see peers.` };
+        if (input.question) {
+          // Deliver the question to the peer's inbox so it can answer on its
+          // next turn via read_messages. We also nudge its status so a future
+          // list_sessions shows it was asked.
+          BUS.send(agentLabel, target, `Question from "${agentLabel}": ${input.question}`);
+          try { updateSession(target, { status: 'asked' }); } catch {}
+        }
+        const when = new Date(peer.lastActivity).toLocaleTimeString();
+        const files = (peer.files || []).length
+          ? `\nRecently touching files:\n  - ${peer.files.join('\n  - ')}`
+          : '';
+        return {
+          success: true,
+          output: `Session "${target}" (model: ${peer.model}, status: ${peer.status}, last active ${when})${peer.goal ? `\nCurrent goal: ${peer.goal}` : '\nNo goal recorded.'}${files}${input.question ? '\n\nYour question was delivered to its inbox.' : ''}`,
+        };
       }
 
       default: {
