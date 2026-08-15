@@ -21,6 +21,20 @@ export class RemoteRelay {
     const url = new URL(request.url)
     const role = url.searchParams.get('role') === 'host' ? 'host' : 'client'
 
+    // index.js checks expires_at before ever forwarding the upgrade request,
+    // but that only gates *admission* — without this, a socket admitted a
+    // moment before expiry would keep relaying indefinitely, since nothing
+    // here ever re-checked the deadline. A DO alarm (not setTimeout) is used
+    // because it survives eviction/restart: a live WebSocket connection
+    // normally keeps the DO resident, but there's no guarantee of that across
+    // Cloudflare's own maintenance/eviction, and a lost timer would silently
+    // turn back into unbounded access.
+    const expiresAt = Number(url.searchParams.get('expiresAt'))
+    if (Number.isFinite(expiresAt) && expiresAt > 0) {
+      if (expiresAt <= Date.now()) return new Response('Pairing expired', { status: 410 })
+      await this.state.storage.setAlarm(expiresAt)
+    }
+
     const pair = new WebSocketPair()
     const [client, server] = Object.values(pair)
     server.accept()
@@ -58,6 +72,15 @@ export class RemoteRelay {
     }
 
     return new Response(null, { status: 101, webSocket: client })
+  }
+
+  // Fires when the pairing's TTL is reached. Closes whatever is connected so
+  // neither side retains live remote-control access past expiry.
+  async alarm() {
+    if (this.host) { try { this.host.close(4001, 'pairing expired') } catch {} }
+    if (this.client) { try { this.client.close(4001, 'pairing expired') } catch {} }
+    this.host = null
+    this.client = null
   }
 
   relayToClient(data) {

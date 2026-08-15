@@ -5310,6 +5310,7 @@ app.get('/remote/ws', async (c) => {
 
   const url = new URL(c.req.url)
   url.searchParams.set('role', role)
+  url.searchParams.set('expiresAt', String(row.expires_at))
   return stub.fetch(new Request(url, c.req.raw))
 })
 
