@@ -465,6 +465,9 @@ export class ChatGeneration {
     const decoder = new TextDecoder()
     let pending = ''
     let held = ''
+    let chunkCount = 0
+    let lastFinishReason = null
+    let sawTopLevelError = null
 
     for (;;) {
       const { done, value } = await reader.read()
@@ -478,8 +481,13 @@ export class ChatGeneration {
         const payload = line.slice(6).trim()
         if (!payload || payload === '[DONE]') continue
 
-        let delta
-        try { delta = JSON.parse(payload).choices?.[0]?.delta } catch { continue }
+        let parsed
+        try { parsed = JSON.parse(payload) } catch { continue }
+        chunkCount++
+        if (parsed.error) sawTopLevelError = JSON.stringify(parsed.error).slice(0, 300)
+        const choice = parsed.choices?.[0]
+        if (choice?.finish_reason) lastFinishReason = choice.finish_reason
+        const delta = choice?.delta
         if (!delta) continue
 
         if (this.cancelRequested) continue
@@ -497,6 +505,19 @@ export class ChatGeneration {
           this.toolCalls[index] = slot
         }
       }
+    }
+
+    // Diagnostic: a moderated model returning zero content deltas (traced
+    // to real "Fresco returned an empty reply" failures on 2026-08-24, even
+    // for a trivial first message) is unusual enough to warrant a
+    // breadcrumb — this.fail()'s error message alone doesn't carry
+    // finish_reason/chunk counts, and vLLM's own access logs don't include
+    // response bodies. Cheap, purely additive. Remove once root-caused.
+    if (moderated && !held) {
+      console.error(
+        `[consume] moderated model returned no content — chunks=${chunkCount} ` +
+        `finish_reason=${lastFinishReason} error=${sawTopLevelError} toolCalls=${this.toolCalls.length}`
+      )
     }
 
     this.toolCalls = this.toolCalls.filter(Boolean)
