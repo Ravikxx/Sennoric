@@ -17,8 +17,9 @@ import {
   WEEK_MS,
   WINDOW_MS,
 } from './billing.js'
-import { probeLumenHealth, proxyLumenRequest } from './lumen-upstream.js'
-import { probeVeilHealth, proxyVeilRequest } from './veil-upstream.js'
+import { probeFrescoHealth, proxyFrescoRequest } from './fresco-upstream.js'
+import { probeFresco13Health, proxyFresco13Request } from './fresco13-upstream.js'
+import { probeGlyphHealth, proxyGlyphRequest } from './glyph-upstream.js'
 import { runCode } from './sandbox.js'
 import { runStatusChecks, getStatusSnapshot } from './status.js'
 import {
@@ -28,6 +29,7 @@ import {
 } from './auditLog.js'
 import { reviewPendingMessages } from './messageReview.js'
 export { ChatGeneration } from './chatGeneration.js'
+export { RemoteRelay } from './remoteRelay.js'
 import { avatarUrlForUser, installAvatarRoutes } from './avatar.js'
 import { WEB_ORIGIN, LEGACY_WEB_ORIGIN, ALLOWED_WEB_ORIGINS } from './webOrigins.js'
 import {
@@ -156,7 +158,7 @@ async function verifyPasswordModern(password, stored) {
 // Legacy verify only — never used to mint new hashes.
 async function hashPw(password, salt) {
   const enc = new TextEncoder()
-  const data = enc.encode(password + (salt || 'axion'))
+  const data = enc.encode(password + (salt || 'sennoric'))
   const buf = await crypto.subtle.digest('SHA-256', data)
   return bytesToHex(new Uint8Array(buf))
 }
@@ -189,12 +191,12 @@ async function verifyPassword(password, storedHash, salt) {
 function genKey() {
   const bytes = new Uint8Array(20)
   crypto.getRandomValues(bytes)
-  return 'axion-sk-' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
+  return 'sennoric-sk-' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
 const TOKEN_TTL = 7 * 24 * 60 * 60 * 1000 // 7 days
 const SESSION_COOKIE_TTL = 30 * 24 * 60 * 60 * 1000 // 30 days
-const SESSION_COOKIE = 'axion_session'
+const SESSION_COOKIE = 'sennoric_session'
 const DOMAIN_MIGRATION_TTL = 60 * 1000
 const NEW_API_ORIGIN = 'https://api.sennoric.com'
 
@@ -315,7 +317,7 @@ function validEmail(email) {
 async function requireKey(c) {
   const auth = c.req.header('Authorization') || ''
   const key = auth.replace(/^Bearer\s+/i, '').trim()
-  if (!key.startsWith('axion-sk-')) return null
+  if (!key.startsWith('sennoric-sk-')) return null
   return c.env.DB.prepare('SELECT * FROM api_keys WHERE key_value=? AND revoked=0').bind(key).first()
 }
 
@@ -600,10 +602,10 @@ app.get('/auth/verify', async (c) => {
 //      BASE64URL(SHA-256(verifier)) to the browser as `code_challenge`.
 //   2. User approves in the browser; POST /auth/desktop/approve issues a
 //      single-use code bound to that challenge.
-//   3. Browser hands the code back to the app via the axion:// handler.
+//   3. Browser hands the code back to the app via the sennoric:// handler.
 //   4. App redeems it at POST /auth/desktop/token with the raw verifier.
 //
-// A hostile app registered for axion:// can intercept step 3, but cannot
+// A hostile app registered for sennoric:// can intercept step 3, but cannot
 // complete step 4: it never saw the verifier, and the code is bound to the
 // challenge. See RFC 8252 §8.1 for why this matters on desktop specifically.
 
@@ -1147,8 +1149,8 @@ app.get('/auth/github/callback', async (c) => {
   if (desktopIntegration) return desktopIntegration
 
   const [profileRes, emailsRes] = await Promise.all([
-    fetch('https://api.github.com/user', { headers: { Authorization: `Bearer ${access_token}`, 'User-Agent': 'axion-api' } }),
-    fetch('https://api.github.com/user/emails', { headers: { Authorization: `Bearer ${access_token}`, 'User-Agent': 'axion-api' } }),
+    fetch('https://api.github.com/user', { headers: { Authorization: `Bearer ${access_token}`, 'User-Agent': 'sennoric-api' } }),
+    fetch('https://api.github.com/user/emails', { headers: { Authorization: `Bearer ${access_token}`, 'User-Agent': 'sennoric-api' } }),
   ])
   const profile = await profileRes.json()
   const emails = await emailsRes.json()
@@ -1355,6 +1357,62 @@ app.post('/auth/login/app', async (c) => {
   return json({ token: await makeToken(user.id, c.env.TOKEN_SECRET, user.token_version || 0), email: user.email })
 })
 
+// ── Client error reporting ───────────────────────────────────────────────
+// The iPhone app (and future native clients) show the user only a generic
+// "Something went wrong" and POST the real failure here for triage. Auth is
+// optional — client errors happen before sign-in too — and the report is
+// fire-and-forget from the client, so we accept it opportunistically and never
+// block on it or let a reporting failure surface to the user.
+app.post('/client/errors', async (c) => {
+  const user = await requireAuth(c) // null if no/invalid token — that's fine
+
+  let body = {}
+  try {
+    body = await c.req.json()
+  } catch {
+    body = {}
+  }
+  if (typeof body !== 'object' || body === null) body = {}
+
+  // Never trust client-sent lengths; cap every field so a malformed or
+  // oversized report can't blow up the insert or the row.
+  const truncate = (value, max) => {
+    const str = typeof value === 'string' ? value : (value == null ? '' : String(value))
+    return str.slice(0, max)
+  }
+
+  const id = bytesToHex(crypto.getRandomValues(new Uint8Array(16)))
+  const row = {
+    id,
+    user_id: user?.id || null,
+    app_version: truncate(body.app_version, 64),
+    build_number: truncate(body.build_number, 64),
+    os_version: truncate(body.os_version, 64),
+    device_model: truncate(body.device_model, 128),
+    type: truncate(body.type, 128),
+    message: truncate(body.message, 4000),
+    stack: truncate(body.stack, 16000),
+    context: truncate(body.context, 1000),
+    created_at: Date.now(),
+  }
+
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO client_errors (
+         id, user_id, app_version, build_number, os_version, device_model,
+         type, message, stack, context, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      row.id, row.user_id, row.app_version, row.build_number, row.os_version,
+      row.device_model, row.type, row.message, row.stack, row.context, row.created_at
+    ).run()
+  } catch (err) {
+    // Reporting must never break the client experience. Swallow and log.
+    console.error('client error report failed', err)
+  }
+  return json({ ok: true }, 202)
+})
+
 // ── Dashboard ──────────────────────────────────────────────────────────────
 
 const listApiKeys = async (c) => {
@@ -1440,7 +1498,7 @@ const getAccountProfile = async (c) => {
   const user = await requireAuth(c)
   if (!user) return json({ error: 'Not authenticated' }, 401)
   const usage = await readAccountUsage(c.env.DB, user.id)
-  const { weeklyBudget, windowBudget } = limitsForPlan(user.plan)
+  const { weeklyBudget, windowBudget } = await boostedLimitsForPlan(user.plan, c.env)
   return json({
     connected: {
       google: !!user.google_id,
@@ -1470,8 +1528,8 @@ const getAccountProfile = async (c) => {
     metering: {
       unit: 'microdollar',
       usd_per_microdollar: 0.000001,
-      input_per_million_tokens_usd: LUMEN_INPUT_PER_M_USD,
-      output_per_million_tokens_usd: LUMEN_OUTPUT_PER_M_USD,
+      input_per_million_tokens_usd: FRESCO_INPUT_PER_M_USD,
+      output_per_million_tokens_usd: FRESCO_OUTPUT_PER_M_USD,
     },
   })
 }
@@ -1731,13 +1789,16 @@ function webChatMessages(messages) {
 
 // Loads one chat's messages as the same {role, content, tool_calls?,
 // tool_call_id?, ts, generation_id?} shape the old JSON blob produced, so
-// nothing downstream of this (the client, webChatMessages) has to change.
+// nothing downstream of this (the client, webChatMessages) has to change —
+// seq is a new additive field, ignored by any consumer that doesn't ask for
+// it. Clients use it to target DELETE /chats/:id/messages?from_seq= for
+// editing/regenerating a specific turn.
 async function loadMessages(db, chatId) {
   const { results } = await db.prepare(
-    'SELECT role, content, tool_calls, tool_call_id, generation_id, created_at FROM messages WHERE chat_id=? ORDER BY seq ASC'
+    'SELECT seq, role, content, tool_calls, tool_call_id, generation_id, created_at FROM messages WHERE chat_id=? ORDER BY seq ASC'
   ).bind(chatId).all()
   return results.map(row => {
-    const out = { role: row.role, content: row.content, ts: row.created_at }
+    const out = { seq: row.seq, role: row.role, content: row.content, ts: row.created_at }
     if (row.tool_calls) { try { out.tool_calls = JSON.parse(row.tool_calls) } catch {} }
     if (row.tool_call_id) out.tool_call_id = row.tool_call_id
     if (row.generation_id) out.generation_id = row.generation_id
@@ -1769,23 +1830,52 @@ async function appendMessage(db, { chatId, userId, role, content, toolCalls, too
 
 function webChatTools(tools) {
   if (!Array.isArray(tools)) return undefined
+  const safeTools = []
   const runCode = tools.find(tool => tool?.type === 'function' && tool?.function?.name === 'run_code')
-  if (!runCode) return undefined
-  return [{
-    type: 'function',
-    function: {
-      name: 'run_code',
-      description: String(runCode.function.description || '').slice(0, 12_000),
-      parameters: {
-        type: 'object',
-        properties: {
-          code: { type: 'string', description: 'Code to execute.' },
-          language: { type: 'string', enum: ['python', 'javascript'] },
+  if (runCode) {
+    safeTools.push({
+      type: 'function',
+      function: {
+        name: 'run_code',
+        description: String(runCode.function.description || '').slice(0, 12_000),
+        parameters: {
+          type: 'object',
+          properties: {
+            code: { type: 'string', description: 'Code to execute.' },
+            language: { type: 'string', enum: ['python', 'javascript'] },
+          },
+          required: ['code'],
         },
-        required: ['code'],
       },
-    },
-  }]
+    })
+  }
+
+  // Artifact creation is server-defined rather than trusting a caller-supplied
+  // schema. The generation worker is the only executor, and it only implements
+  // this one non-destructive cloud tool. This gives hosted clients the same
+  // conversational "New artifact" flow as Desktop without exposing arbitrary
+  // tool execution through the public chat endpoint.
+  if (tools.some(tool => tool?.type === 'function' && tool?.function?.name === 'create_cloud_artifact')) {
+    safeTools.push({
+      type: 'function',
+      function: {
+        name: 'create_cloud_artifact',
+        description: 'Create a new artifact in the user\'s Sennoric cloud account. Use this when the user asks to make an artifact.',
+        parameters: {
+          type: 'object',
+          properties: {
+            title: { type: 'string', description: 'Artifact title.' },
+            kind: { type: 'string', enum: ['text', 'markdown', 'code'] },
+            language: { type: 'string', description: 'Language or file extension when kind is code.' },
+            content: { type: 'string', description: 'The artifact\'s full content.' },
+          },
+          required: ['content'],
+        },
+      },
+    })
+  }
+
+  return safeTools.length ? safeTools : undefined
 }
 
 // A loose cron-shape check (5 whitespace-separated fields, each restricted
@@ -3150,7 +3240,7 @@ app.delete('/chats/:id/messages', async (c) => {
 // scheduled-task dispatcher. Returns {ok:false, reason, ...} instead of
 // throwing on any of the expected non-success cases, so callers outside an
 // HTTP request (like the dispatcher) don't need to catch a thrown Response.
-async function startChatGeneration(env, { chatId, userId, tokenVersion = 0, model, tools, scheduledDefinitionId } = {}) {
+async function startChatGeneration(env, { chatId, userId, tokenVersion = 0, model, tools, instructions, scheduledDefinitionId } = {}) {
   const row = await env.DB.prepare(
     `SELECT chats.id, chats.active_generation_id,
             generations.status AS generation_status
@@ -3173,11 +3263,15 @@ async function startChatGeneration(env, { chatId, userId, tokenVersion = 0, mode
     return { ok: false, reason: 'bad_last_role' }
   }
 
-  const resolvedModel = typeof model === 'string' && model ? model.slice(0, 100) : 'lumen'
+  const resolvedModel = typeof model === 'string' && model ? model.slice(0, 100) : 'fresco'
   const resolvedTools = webChatTools(tools)
+  const resolvedInstructions = typeof instructions === 'string' ? instructions.trim().slice(0, 8_000) : ''
   const requestBody = {
     model: resolvedModel,
-    messages: webChatMessages(messages),
+    messages: [
+      ...(resolvedInstructions ? [{ role: 'system', content: resolvedInstructions }] : []),
+      ...webChatMessages(messages),
+    ],
     ...(resolvedTools ? { tools: resolvedTools } : {}),
   }
   const id = `gen-${crypto.randomUUID()}`
@@ -3226,6 +3320,7 @@ app.post('/chats/:id/generations', async (c) => {
     tokenVersion: user.token_version || 0,
     model: request.model,
     tools: request.tools,
+    instructions: request.instructions,
   })
 
   if (!result.ok) {
@@ -3270,6 +3365,31 @@ app.get('/chats/:id/generations/:generationId/stream', async (c) => {
   return stub.fetch('https://chat-generation.internal/stream', {
     headers: { Origin: c.req.header('Origin') || '' },
   })
+})
+
+// Stops a server-owned generation without aborting the upstream response in a
+// way that could strand the model worker. The Durable Object closes viewers
+// immediately, marks the generation cancelled, drains the upstream stream,
+// and deliberately discards all remaining/partial output instead of saving it.
+app.delete('/chats/:id/generations/:generationId', async (c) => {
+  const user = await requireAuth(c)
+  if (!user) return json({ error: 'Not authenticated' }, 401)
+
+  const chatId = c.req.param('id')
+  const generationId = c.req.param('generationId')
+  const row = await c.env.DB.prepare(
+    'SELECT status FROM chat_generations WHERE id=? AND chat_id=? AND user_id=?'
+  ).bind(generationId, chatId, user.id).first()
+  if (!row) return json({ error: 'Generation not found' }, 404)
+  if (!ACTIVE_GENERATION_STATUSES.has(row.status)) {
+    return json({ ok: true, status: row.status })
+  }
+
+  const objectId = c.env.CHAT_GENERATIONS.idFromName(generationId)
+  const stub = c.env.CHAT_GENERATIONS.get(objectId)
+  const response = await stub.fetch('https://chat-generation.internal/cancel', { method: 'POST' })
+  if (!response.ok) return json({ error: 'Could not stop the reply.' }, 502)
+  return json({ ok: true, status: 'cancelled' })
 })
 
 // Soft delete: moves the chat to Trash rather than removing it. Restore with
@@ -3339,8 +3459,8 @@ async function purgeExpiredShares(db) {
 const FREE_KEY_CAP      = 3     // max non-revoked API keys, free plan (pro is uncapped)
 
 // Fresco pricing — also the unit the pay-as-you-go credits feature will use.
-const LUMEN_INPUT_PER_M_USD  = 0.15
-const LUMEN_OUTPUT_PER_M_USD = 0.50
+const FRESCO_INPUT_PER_M_USD  = 0.15
+const FRESCO_OUTPUT_PER_M_USD = 0.50
 
 // Usage budgets, denominated in microdollars (1,000,000 = $1) rather than raw
 // request or token counts. Request counts are a bad proxy for cost (a 5-token
@@ -3363,6 +3483,49 @@ function limitsForPlan(plan) {
     : { weeklyBudget: FREE_WEEKLY_BUDGET, windowBudget: FREE_WINDOW_BUDGET }
 }
 
+// Module-level cache for the admin-controlled temporary usage boost — an
+// isolate can serve many requests per second, and this is read on every
+// billed request, so it can't be a DB hit per request. Re-fetched at most
+// once every 30s per isolate; a stale cache means a boost activated or
+// cleared by an admin takes up to 30s to take effect worker-wide, which is
+// an acceptable tradeoff for not hitting D1 on every chat completion.
+let _usageBoostCache = { multiplier: 1, fetchedAt: 0 }
+const USAGE_BOOST_CACHE_MS = 30_000
+
+async function activeBoostMultiplier(env) {
+  const now = Date.now()
+  if (now - _usageBoostCache.fetchedAt < USAGE_BOOST_CACHE_MS) {
+    return _usageBoostCache.multiplier
+  }
+  let multiplier = 1
+  try {
+    const row = await env.DB.prepare('SELECT percent, expires_at FROM usage_boost WHERE id=1').first()
+    const nowSeconds = Math.floor(now / 1000)
+    if (row && row.percent > 0 && row.expires_at && row.expires_at > nowSeconds) {
+      multiplier = 1 + row.percent / 100
+    }
+  } catch {
+    // Table missing (pre-migration) or DB unreachable — fall back to no
+    // boost rather than fail the request the caller actually cares about.
+    multiplier = 1
+  }
+  _usageBoostCache = { multiplier, fetchedAt: now }
+  return multiplier
+}
+
+// Same shape as limitsForPlan, but async and boost-aware — every real call
+// site (as opposed to display-only estimates) should use this, not the
+// plain sync version, or a live boost silently won't apply to enforcement.
+async function boostedLimitsForPlan(plan, env) {
+  const base = limitsForPlan(plan)
+  const multiplier = await activeBoostMultiplier(env)
+  if (multiplier === 1) return base
+  return {
+    weeklyBudget: Math.round(base.weeklyBudget * multiplier),
+    windowBudget: Math.round(base.windowBudget * multiplier),
+  }
+}
+
 // Sandbox tool-call config, gated by plan the same way limitsForPlan is —
 // placed alongside it for discoverability, but only ever called from the
 // /v1/sandbox/execute route, not the chat completions path.
@@ -3383,7 +3546,7 @@ function sandboxConfigForPlan(plan) {
 }
 
 function requestCostMicrodollars(inputTokens, outputTokens) {
-  return Math.round(inputTokens * LUMEN_INPUT_PER_M_USD + outputTokens * LUMEN_OUTPUT_PER_M_USD)
+  return Math.round(inputTokens * FRESCO_INPUT_PER_M_USD + outputTokens * FRESCO_OUTPUT_PER_M_USD)
 }
 
 // ~4 chars/token — the standard rough heuristic (same one the CLI uses
@@ -3393,9 +3556,51 @@ function requestCostMicrodollars(inputTokens, outputTokens) {
 function estimateTokensFromChars(text) {
   return Math.ceil((text || '').length / 4)
 }
+// Module-level cache for the admin kill switch, same pattern and same
+// reasoning as _usageBoostCache above — read on every request, so it can't
+// be a DB hit per request. A disabled/re-enabled model takes up to 30s to
+// take effect worker-wide.
+let _disabledModelsCache = { ids: new Set(), fetchedAt: 0 }
+const DISABLED_MODELS_CACHE_MS = 30_000
+
+async function disabledModelIds(env) {
+  const now = Date.now()
+  if (now - _disabledModelsCache.fetchedAt < DISABLED_MODELS_CACHE_MS) {
+    return _disabledModelsCache.ids
+  }
+  let ids = new Set()
+  try {
+    const { results } = await env.DB.prepare('SELECT model_id FROM disabled_models').all()
+    ids = new Set(results.map((r) => r.model_id))
+  } catch {
+    // Table missing (pre-migration) or DB unreachable — fail open (treat as
+    // nothing disabled) rather than take every model down if this one
+    // query has a problem; the kill switch is a convenience, not something
+    // that should itself become an outage vector.
+    ids = new Set()
+  }
+  _disabledModelsCache = { ids, fetchedAt: now }
+  return ids
+}
+
 async function proxyUpstream(body, env) {
-  if ((body.model || '').toLowerCase() === 'veil') return proxyVeilRequest(body, env)
-  return proxyLumenRequest(body, env)
+  const requested = (body.model || '').toLowerCase()
+
+  const disabled = await disabledModelIds(env)
+  if (disabled.has(requested)) {
+    return new Response(
+      JSON.stringify({ error: { message: `Model "${requested}" is temporarily disabled.`, type: 'model_disabled' } }),
+      { status: 503, headers: { 'Content-Type': 'application/json; charset=utf-8' } },
+    )
+  }
+
+  if (requested === 'glyph') return proxyGlyphRequest(body, env)
+  // Explicit match required — 'fresco-1.3' must NOT fall into the default
+  // Fresco 1.2.5 branch below (that branch is a catch-all for any
+  // unrecognized model string, which would otherwise silently serve 1.3
+  // requests off 1.2.5's endpoint with no error).
+  if (requested === 'fresco-1.3') return proxyFresco13Request(body, env)
+  return proxyFrescoRequest(body, env)
 }
 
 // Tees the body so the client gets the untouched stream immediately, while
@@ -3482,7 +3687,7 @@ app.post('/v1/sandbox/execute', async (c) => {
   const auth = (c.req.header('Authorization') || '').replace(/^Bearer\s+/i, '').trim()
 
   let billedUser = null
-  if (auth.startsWith('axion-sk-')) {
+  if (auth.startsWith('sennoric-sk-')) {
     const keyRow = await c.env.DB.prepare('SELECT * FROM api_keys WHERE key_value=? AND revoked=0').bind(auth).first()
     if (!keyRow) return json({ error: { message: 'Invalid or revoked API key', type: 'invalid_request_error' } }, 401)
     billedUser = await c.env.DB.prepare('SELECT * FROM users WHERE id=?').bind(keyRow.user_id).first()
@@ -3532,17 +3737,67 @@ app.post('/v1/sandbox/execute', async (c) => {
   })
 })
 
+// Text-to-speech, proxied to ElevenLabs so the key stays server-side —
+// iOS's SpeechOutputController calls this instead of the on-device
+// AVSpeechSynthesizer voice (BACKLOG.md item #8's "real fix"). Requires a
+// signed-in account, same as everything else here; no separate API-key path
+// since this isn't part of the public chat-completions surface.
+const ELEVENLABS_DEFAULT_VOICE_ID = '21m00Tcm4TlvDq8ikWAM' // "Rachel", a stock ElevenLabs voice
+const ELEVENLABS_MAX_CHARACTERS = 4000
+
+app.post('/tts', async (c) => {
+  const user = await requireAuth(c)
+  if (!user) return json({ error: 'Not authenticated' }, 401)
+
+  const body = await c.req.json().catch(() => ({}))
+  const text = typeof body.text === 'string' ? body.text.trim() : ''
+  if (!text) return json({ error: 'Missing text' }, 400)
+  if (text.length > ELEVENLABS_MAX_CHARACTERS) {
+    return json({ error: `Text is too long (max ${ELEVENLABS_MAX_CHARACTERS} characters)` }, 413)
+  }
+  const voiceId = typeof body.voice_id === 'string' && body.voice_id ? body.voice_id : ELEVENLABS_DEFAULT_VOICE_ID
+
+  let upstream
+  try {
+    upstream = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`, {
+      method: 'POST',
+      headers: {
+        'xi-api-key': c.env.ELEVENLABS_API_KEY,
+        'Content-Type': 'application/json',
+        Accept: 'audio/mpeg',
+      },
+      body: JSON.stringify({
+        text,
+        model_id: 'eleven_turbo_v2_5',
+        voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+      }),
+    })
+  } catch (error) {
+    return json({ error: `Could not reach ElevenLabs: ${error.message}` }, 502)
+  }
+
+  if (!upstream.ok) {
+    const detail = await upstream.text().catch(() => '')
+    return json({ error: `ElevenLabs rejected the request: ${detail}` }, upstream.status)
+  }
+
+  return new Response(upstream.body, {
+    status: 200,
+    headers: { 'Content-Type': 'audio/mpeg' },
+  })
+})
+
 app.post('/v1/chat/completions', async (c) => {
   const ip = c.req.header('CF-Connecting-IP') || 'unknown'
   const auth = (c.req.header('Authorization') || '').replace(/^Bearer\s+/i, '').trim()
 
   // ── Account-billed request (API key or signed-in session) ──
   // Website chat/playground traffic authenticates with a signed session
-  // token rather than an axion-sk- key; it must hit the same account
+  // token rather than an sennoric-sk- key; it must hit the same account
   // budgets and charging as keyed traffic.
   let keyRow = null
   let billedUser = null
-  if (auth.startsWith('axion-sk-')) {
+  if (auth.startsWith('sennoric-sk-')) {
     keyRow = await c.env.DB.prepare('SELECT * FROM api_keys WHERE key_value=? AND revoked=0').bind(auth).first()
     if (!keyRow) return json({ error: { message: 'Invalid or revoked API key', type: 'invalid_request_error' } }, 401)
 
@@ -3563,7 +3818,7 @@ app.post('/v1/chat/completions', async (c) => {
   const auditRequestMessages = JSON.stringify(body.messages)
 
   if (billedUser) {
-    const { weeklyBudget: planWeeklyBudget, windowBudget: planWindowBudget } = limitsForPlan(billedUser.plan)
+    const { weeklyBudget: planWeeklyBudget, windowBudget: planWindowBudget } = await boostedLimitsForPlan(billedUser.plan, c.env)
 
     // Scope check — if key has scopes, requested model must be in the list
     if (keyRow?.scopes) {
@@ -3719,13 +3974,13 @@ app.post('/v1/chat/completions', async (c) => {
 })
 
 app.get('/v1/models', async (c) => {
-  return json({
-    object: 'list',
-    data: [
-      { id: 'lumen', object: 'model', created: 1750000000, owned_by: 'axion-labs' },
-      { id: 'veil', object: 'model', created: 1785536086, owned_by: 'axion-labs' },
-    ],
-  })
+  const disabled = await disabledModelIds(c.env)
+  const all = [
+    { id: 'fresco-1.3', object: 'model', created: 1787000000, owned_by: 'sennoric' },
+    { id: 'fresco', object: 'model', created: 1750000000, owned_by: 'sennoric' },
+    { id: 'glyph', object: 'model', created: 1785536086, owned_by: 'sennoric' },
+  ]
+  return json({ object: 'list', data: all.filter((m) => !disabled.has(m.id)) })
 })
 
 // `ok` means the API itself is up; `model_up` means the model behind it
@@ -3740,7 +3995,7 @@ app.get('/health', async (c) => {
     model_up = (await cached.json()).model_up
   } else {
     try {
-      model_up = await probeLumenHealth(c.env, fetch, 6000)
+      model_up = await probeFrescoHealth(c.env, fetch, 6000)
     } catch {
       model_up = false
     }
@@ -3748,7 +4003,7 @@ app.get('/health', async (c) => {
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'max-age=120' },
     })))
   }
-  return json({ ok: true, model: 'lumen-1.2.5', model_up })
+  return json({ ok: true, model: 'fresco-1.2.5', model_up })
 })
 
 // Public status page data: current per-service state, a 30-day uptime
@@ -3933,8 +4188,14 @@ app.get('/admin/users', async (c) => {
      ORDER BY CASE WHEN u.id=? THEN 0 ELSE 1 END, u.created_at DESC LIMIT 100`
   ).bind(user.id).all()
 
+  // Fetched once for the whole list rather than per row — the cache inside
+  // activeBoostMultiplier makes repeat calls cheap anyway, but there's no
+  // reason to even do that when every row in this list shares one value.
+  const boostMultiplier = await activeBoostMultiplier(c.env)
   const users = results.map((row) => {
-    const { weeklyBudget, windowBudget } = limitsForPlan(row.plan)
+    const base = limitsForPlan(row.plan)
+    const weeklyBudget = boostMultiplier === 1 ? base.weeklyBudget : Math.round(base.weeklyBudget * boostMultiplier)
+    const windowBudget = boostMultiplier === 1 ? base.windowBudget : Math.round(base.windowBudget * boostMultiplier)
     const week = periodStatus(row.usage_week, row.included_week_cost, WEEK_MS)
     const win = periodStatus(row.usage_window, row.included_window_cost, WINDOW_MS)
     return {
@@ -4007,7 +4268,7 @@ app.put('/admin/users/:id/account-testing', async (c) => {
       previous.credit_balance || 0, credit_balance, changedAt),
   ])
 
-  const { weeklyBudget, windowBudget } = limitsForPlan(plan)
+  const { weeklyBudget, windowBudget } = await boostedLimitsForPlan(plan, c.env)
   return json({
     ok: true,
     user: {
@@ -4026,6 +4287,158 @@ app.put('/admin/users/:id/account-testing', async (c) => {
       }, weeklyBudget, windowBudget),
     },
   })
+})
+
+// Max multiplier of 500% (6x base) — a sanity ceiling against a typo like
+// pasting 5000 instead of 50, not a considered product limit. Raise it
+// deliberately if a real promo ever needs more.
+const MAX_USAGE_BOOST_PERCENT = 500
+
+app.get('/admin/usage-boost', async (c) => {
+  const user = await requireAdmin(c)
+  if (!user) return json({ error: 'Forbidden' }, 403)
+  const row = await c.env.DB.prepare('SELECT percent, expires_at, set_by, set_at FROM usage_boost WHERE id=1').first()
+  const nowSeconds = Math.floor(Date.now() / 1000)
+  const active = Boolean(row && row.percent > 0 && row.expires_at && row.expires_at > nowSeconds)
+  return json({ ...row, active })
+})
+
+app.post('/admin/usage-boost', async (c) => {
+  const admin = await requireAdmin(c)
+  if (!admin) return json({ error: 'Forbidden' }, 403)
+
+  const body = await c.req.json().catch(() => ({}))
+  const { percent, expires_at } = body
+  // percent=0 (any expires_at, including none) is the explicit "turn the
+  // boost off" case — validated separately so clearing it doesn't also
+  // have to satisfy the future-timestamp check below.
+  if (percent === 0) {
+    await c.env.DB.prepare(
+      'UPDATE usage_boost SET percent=0, expires_at=NULL, set_by=?, set_at=? WHERE id=1'
+    ).bind(admin.email, Math.floor(Date.now() / 1000)).run()
+    return json({ ok: true, percent: 0, expires_at: null, active: false })
+  }
+
+  if (!Number.isInteger(percent) || percent < 1 || percent > MAX_USAGE_BOOST_PERCENT) {
+    return json({ error: `percent must be a whole number from 1 to ${MAX_USAGE_BOOST_PERCENT} (or exactly 0 to clear)` }, 400)
+  }
+  const nowSeconds = Math.floor(Date.now() / 1000)
+  if (!Number.isInteger(expires_at) || expires_at <= nowSeconds) {
+    return json({ error: 'expires_at must be a whole-second Unix timestamp in the future' }, 400)
+  }
+
+  await c.env.DB.prepare(
+    'UPDATE usage_boost SET percent=?, expires_at=?, set_by=?, set_at=? WHERE id=1'
+  ).bind(percent, expires_at, admin.email, nowSeconds).run()
+
+  return json({ ok: true, percent, expires_at, active: true })
+})
+
+// Resets every account's current week/window usage to zero — the same
+// state a real, never-touched period looks like under the lazy-start model
+// (see migration 011). This is deliberately a blunt, all-accounts action;
+// there's no per-user targeting here on purpose, since the per-account
+// editor already covers that case (PUT /admin/users/:id/account-testing).
+app.post('/admin/usage/reset-all', async (c) => {
+  const admin = await requireAdmin(c)
+  if (!admin) return json({ error: 'Forbidden' }, 403)
+
+  const body = await c.req.json().catch(() => ({}))
+  // Defense in depth beyond the client's own confirm() dialog — this
+  // affects every account with no undo, so the request itself must say it
+  // means it, not just have come from an authenticated admin session.
+  if (body.confirm !== true) {
+    return json({ error: 'Resetting usage for every account requires { "confirm": true } in the request body.' }, 400)
+  }
+
+  const { meta } = await c.env.DB.prepare(
+    `UPDATE users SET included_week_cost=0, usage_week='', included_window_cost=0, usage_window='', usage_limit_notified=NULL`
+  ).run()
+  const affected = meta?.changes ?? 0
+
+  await c.env.DB.prepare(
+    'INSERT INTO admin_bulk_usage_resets (id, admin_email, affected_users, created_at) VALUES (?,?,?,?)'
+  ).bind(crypto.randomUUID(), admin.email, affected, Math.floor(Date.now() / 1000)).run()
+
+  return json({ ok: true, affected_users: affected })
+})
+
+app.get('/admin/model-health', async (c) => {
+  const user = await requireAdmin(c)
+  if (!user) return json({ error: 'Forbidden' }, 403)
+
+  const [fresco, glyph, fresco13] = await Promise.all([
+    probeFrescoHealth(c.env),
+    probeGlyphHealth(c.env),
+    probeFresco13Health(c.env),
+  ])
+  const disabled = await disabledModelIds(c.env)
+  return json({
+    models: [
+      { id: 'fresco', label: 'Fresco 1.2.5', up: fresco, disabled: disabled.has('fresco') },
+      { id: 'glyph', label: 'Glyph 1.1', up: glyph, disabled: disabled.has('glyph') },
+      { id: 'fresco-1.3', label: 'Fresco 1.3', up: fresco13, disabled: disabled.has('fresco-1.3') },
+    ],
+  })
+})
+
+app.post('/admin/model-flags/:id', async (c) => {
+  const admin = await requireAdmin(c)
+  if (!admin) return json({ error: 'Forbidden' }, 403)
+  const modelId = c.req.param('id')
+  const body = await c.req.json().catch(() => ({}))
+  const reason = typeof body.reason === 'string' ? body.reason.slice(0, 500) : null
+
+  await c.env.DB.prepare(
+    'INSERT INTO disabled_models (model_id, disabled_by, disabled_at, reason) VALUES (?,?,?,?) ' +
+    'ON CONFLICT(model_id) DO UPDATE SET disabled_by=excluded.disabled_by, disabled_at=excluded.disabled_at, reason=excluded.reason'
+  ).bind(modelId, admin.email, Math.floor(Date.now() / 1000), reason).run()
+
+  return json({ ok: true, model_id: modelId, disabled: true })
+})
+
+app.delete('/admin/model-flags/:id', async (c) => {
+  const admin = await requireAdmin(c)
+  if (!admin) return json({ error: 'Forbidden' }, 403)
+  const modelId = c.req.param('id')
+  await c.env.DB.prepare('DELETE FROM disabled_models WHERE model_id=?').bind(modelId).run()
+  return json({ ok: true, model_id: modelId, disabled: false })
+})
+
+const GUARDRAIL_FLAGS_LIMIT = 200
+
+app.get('/admin/guardrail-flags', async (c) => {
+  const user = await requireAdmin(c)
+  if (!user) return json({ error: 'Forbidden' }, 403)
+
+  const onlyFlagged = c.req.query('flagged_only') === '1'
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, generation_id, user_id, model, flagged, user_text, assistant_text, created_at
+     FROM guardrail_flags
+     ${onlyFlagged ? 'WHERE flagged=1' : ''}
+     ORDER BY created_at DESC LIMIT ?`
+  ).bind(GUARDRAIL_FLAGS_LIMIT).all()
+
+  const total = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM guardrail_flags').first()
+  const flaggedCount = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM guardrail_flags WHERE flagged=1').first()
+
+  return json({
+    rows: results,
+    total: total?.n ?? 0,
+    flagged: flaggedCount?.n ?? 0,
+  })
+})
+
+app.get('/admin/announcement-history', async (c) => {
+  const user = await requireAdmin(c)
+  if (!user) return json({ error: 'Forbidden' }, 403)
+
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, title, sent_at, recipient_count, send_status, send_error
+     FROM announcements ORDER BY sent_at DESC LIMIT 100`
+  ).all()
+
+  return json({ rows: results })
 })
 
 app.get('/admin/allowlist', async (c) => {
@@ -4284,7 +4697,8 @@ app.post('/webhook/announce', async (c) => {
 
   const id = content_hash || crypto.randomUUID()
   const now = Math.floor(Date.now() / 1000)
-  await c.env.DB.prepare('INSERT OR IGNORE INTO announcements (id, title, body, link, sent_at, created_at) VALUES (?,?,?,?,?,?)').bind(id, title.trim(), body.trim(), link || null, now, now).run()
+  const initialStatus = c.env.RESEND_API_KEY ? 'sending' : 'skipped_no_resend_key'
+  await c.env.DB.prepare('INSERT OR IGNORE INTO announcements (id, title, body, link, sent_at, created_at, send_status) VALUES (?,?,?,?,?,?,?)').bind(id, title.trim(), body.trim(), link || null, now, now, initialStatus).run()
 
   if (c.env.RESEND_API_KEY) {
     c.executionCtx.waitUntil((async () => {
@@ -4325,8 +4739,12 @@ app.post('/webhook/announce', async (c) => {
             })
           }))
         }
+        await c.env.DB.prepare('UPDATE announcements SET recipient_count=?, send_status=? WHERE id=?')
+          .bind(all.length, 'sent', id).run()
       } catch (err) {
         console.error(`[announce] background send failed: ${err?.stack || err}`)
+        await c.env.DB.prepare('UPDATE announcements SET send_status=?, send_error=? WHERE id=?')
+          .bind('failed', String(err?.message || err).slice(0, 500), id).run()
       }
     })())
   } else {
@@ -4977,13 +5395,13 @@ app.post('/orgs/:id/keys', async (c) => {
 // through this worker instead of requiring the phone to be on the same LAN.
 // One Durable Object instance per user id holds the live CLI socket and
 // relays terminal I/O to any attached app sockets. Auth accepts either an
-// axion-sk- API key (what the CLI already stores) or a session token (what
+// sennoric-sk- API key (what the CLI already stores) or a session token (what
 // the app stores after device-flow login) — same account, either credential.
 
 async function resolveBridgeUser(c) {
   const auth = (c.req.header('Authorization') || '').replace(/^Bearer\s+/i, '').trim()
   if (!auth) return null
-  if (auth.startsWith('axion-sk-')) {
+  if (auth.startsWith('sennoric-sk-')) {
     const keyRow = await c.env.DB.prepare('SELECT user_id FROM api_keys WHERE key_value=? AND revoked=0').bind(auth).first()
     return keyRow ? keyRow.user_id : null
   }
@@ -5057,6 +5475,93 @@ export class BridgeRelay {
     for (const app of this.apps) { try { app.send(msg) } catch {} }
   }
 }
+
+// ── Remote: phone <-> desktop code-agent pairing relay ───────────────────────
+//
+// The desktop app creates a pairing (POST /remote/pair/init) and shows a QR
+// encoding the pairing id. The iPhone scans it, then both ends open a
+// WebSocket to /remote/ws (role=host / role=client). The RemoteRelay DO
+// forwards the JSON protocol between them. Ownership is enforced here: only
+// the account that created the pairing may connect as host or client.
+
+const REMOTE_PAIRING_TTL_MS = 10 * 60 * 1000
+
+async function ensureRemotePairingsTable(c) {
+  await c.env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS remote_pairings (
+       pairing_id TEXT PRIMARY KEY,
+       user_id TEXT NOT NULL,
+       created_at INTEGER NOT NULL,
+       expires_at INTEGER NOT NULL
+     )`
+  ).run()
+}
+
+app.post('/remote/pair/init', async (c) => {
+  const user = await requireAuth(c)
+  if (!user) return json({ error: 'Not authenticated' }, 401)
+
+  await ensureRemotePairingsTable(c)
+
+  const pairingId = crypto.randomUUID()
+  const now = Date.now()
+  const expiresAt = now + REMOTE_PAIRING_TTL_MS
+  await c.env.DB.prepare(
+    'INSERT INTO remote_pairings (pairing_id, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)'
+  ).bind(pairingId, user.id, now, expiresAt).run()
+
+  return json({ pairingId, qrPayload: `sennoric-remote://${pairingId}`, expiresAt })
+})
+
+app.get('/remote/pair/:id', async (c) => {
+  const user = await requireAuth(c)
+  if (!user) return json({ error: 'Not authenticated' }, 401)
+  const row = await c.env.DB.prepare(
+    'SELECT pairing_id, user_id, expires_at FROM remote_pairings WHERE pairing_id=?'
+  ).bind(c.req.param('id')).first()
+  if (!row) return json({ error: 'Pairing not found' }, 404)
+  if (row.user_id !== user.id) return json({ error: 'Forbidden' }, 403)
+  return json({ pairingId: row.pairing_id, expired: row.expires_at < Date.now() })
+})
+
+app.delete('/remote/pair/:id', async (c) => {
+  const user = await requireAuth(c)
+  if (!user) return json({ error: 'Not authenticated' }, 401)
+  const row = await c.env.DB.prepare(
+    'SELECT user_id FROM remote_pairings WHERE pairing_id=?'
+  ).bind(c.req.param('id')).first()
+  if (!row) return json({ error: 'Pairing not found' }, 404)
+  if (row.user_id !== user.id) return json({ error: 'Forbidden' }, 403)
+  await c.env.DB.prepare('DELETE FROM remote_pairings WHERE pairing_id=?').bind(c.req.param('id')).run()
+  return json({ ok: true })
+})
+
+app.get('/remote/ws', async (c) => {
+  const upgrade = c.req.header('Upgrade') || ''
+  if (upgrade.toLowerCase() !== 'websocket') return json({ error: 'Expected websocket upgrade' }, 426)
+
+  const user = await requireAuth(c)
+  if (!user) return json({ error: 'Not authenticated' }, 401)
+
+  const pairingId = c.req.query('pairing')
+  if (!pairingId) return json({ error: 'Missing pairing id' }, 400)
+
+  const row = await c.env.DB.prepare(
+    'SELECT user_id, expires_at FROM remote_pairings WHERE pairing_id=?'
+  ).bind(pairingId).first()
+  if (!row) return json({ error: 'Pairing not found' }, 404)
+  if (row.user_id !== user.id) return json({ error: 'Forbidden' }, 403)
+  if (row.expires_at < Date.now()) return json({ error: 'Pairing expired' }, 410)
+
+  const role = c.req.query('role') === 'host' ? 'host' : 'client'
+  const id = c.env.REMOTE_RELAY.idFromName(pairingId)
+  const stub = c.env.REMOTE_RELAY.get(id)
+
+  const url = new URL(c.req.url)
+  url.searchParams.set('role', role)
+  url.searchParams.set('expiresAt', String(row.expires_at))
+  return stub.fetch(new Request(url, c.req.raw))
+})
 
 // One digest email per review run (not one per flagged row) to every admin —
 // admin_allowlist is already the "who has admin dashboard access" list, and
