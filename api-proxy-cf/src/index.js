@@ -346,8 +346,8 @@ function clearSessionCookieHeader(c) {
   return `${SESSION_COOKIE}=; Domain=${sessionCookieDomain(c)}; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax`
 }
 
-async function sessionUserFromCookie(c) {
-  const token = getCookieValue(c, SESSION_COOKIE)
+async function sessionUserFromCookieName(c, cookieName) {
+  const token = getCookieValue(c, cookieName)
   if (!token) return null
   const payload = await parseToken(token, c.env.TOKEN_SECRET)
   if (!payload?.uid) return null
@@ -355,6 +355,10 @@ async function sessionUserFromCookie(c) {
   if (!user || user.banned) return null
   if ((payload.v || 0) !== (user.token_version || 0)) return null
   return user
+}
+
+async function sessionUserFromCookie(c) {
+  return sessionUserFromCookieName(c, SESSION_COOKIE)
 }
 
 function domainMigrationDestination(raw) {
@@ -384,7 +388,11 @@ function noStoreRedirect(location) {
 // a URL or page script.
 app.get('/auth/domain-migrate', async (c) => {
   const destination = domainMigrationDestination(c.req.query('return'))
-  const user = await sessionUserFromCookie(c)
+  // This endpoint only ever runs on the old domain during the cutover, where
+  // a signed-in visitor still carries the pre-rename cookie name, not the
+  // current SESSION_COOKIE — reading the renamed cookie here would mean this
+  // endpoint can never find a signed-in old-domain user.
+  const user = await sessionUserFromCookieName(c, 'axion_session')
   if (!user) return noStoreRedirect(destination)
 
   const now = Date.now()
