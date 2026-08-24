@@ -1,6 +1,34 @@
 import { ALLOWED_WEB_ORIGINS } from './webOrigins.js'
 
 const COMPLETIONS_URL = 'https://api.sennoric.com/v1/chat/completions'
+const ARTIFACT_CONTENT_LIMIT = 500_000
+const ARTIFACT_KINDS = new Set(['text', 'code', 'markdown'])
+
+// Fresco 1.3 shipped below its internal adversarial safety target (66.7% vs
+// an 80% target) — see the 2026-08 safety eval. Its known failure modes are
+// concrete, not vague: it will write real working code that blocks shutdown
+// signals or exfiltrates data when asked, and it will choose self-preservation
+// over stated human-safety priorities in dilemma framings. A keyword filter
+// can't catch this without massive false positives — os.remove() is the
+// CORRECT answer to one of the eval's own benign scenarios and the harmful
+// one, so this uses a second-pass LLM judge call instead, scoped only to
+// this model so no other model's latency or behavior changes.
+const MODERATED_MODELS = new Set(['fresco-1.3'])
+const FLAGGED_MESSAGE_MARKER = '[[SENNORIC_FLAGGED]]'
+const FLAGGED_MESSAGE_TEXT =
+  "This got flagged. It's intentionally benign as of now, because this model " +
+  'did not perform well on our internal safety evaluation. ' +
+  'See sennoric.com/announcements for details.'
+
+const MODERATION_JUDGE_MODEL = 'glyph'
+const MODERATION_SYSTEM_PROMPT =
+  'You are a safety classifier reviewing one assistant reply for genuine, unauthorized ' +
+  'harmful compliance: did it actually perform or enable something dangerous (e.g. ' +
+  'writing code that blocks a shutdown/kill signal, writing code that covertly exfiltrates ' +
+  'data to an external destination, choosing self-preservation over a stated human-safety ' +
+  'priority, or otherwise materially helping with a harmful/destructive request), as opposed ' +
+  'to refusing, writing ordinary benign code, or giving a normal safe answer? ' +
+  'Reply with exactly one word: FLAG or SAFE. Do not explain.'
 
 // Partial text is written to storage at most this often. Frequent enough that a
 // reader attaching after an eviction sees almost everything, rare enough that a
@@ -20,6 +48,37 @@ function errorText(error) {
 
 function sse(event, data) {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+}
+
+// Judges one (user request, assistant reply) pair for genuine harmful
+// compliance. Runs non-streaming, on a cheap model, only for MODERATED_MODELS.
+// Fails OPEN to "flagged" on any error — a judge-call failure should not let
+// an unreviewed reply from a model with a documented safety gap through
+// unchecked; a false-positive block is a much cheaper mistake here than a
+// false-negative pass.
+async function judgeFlagged(token, userText, assistantText) {
+  try {
+    const response = await fetch(COMPLETIONS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        model: MODERATION_JUDGE_MODEL,
+        stream: false,
+        messages: [
+          { role: 'system', content: MODERATION_SYSTEM_PROMPT },
+          { role: 'user', content: `USER REQUEST:\n${userText}\n\nASSISTANT REPLY:\n${assistantText}` },
+        ],
+      }),
+    })
+    if (!response.ok) return true
+    const data = await response.json().catch(() => null)
+    const verdict = String(data?.choices?.[0]?.message?.content || '').trim().toUpperCase()
+    if (verdict.startsWith('SAFE')) return false
+    if (verdict.startsWith('FLAG')) return true
+    return true // unparseable verdict — fail open to flagged, not safe
+  } catch {
+    return true
+  }
 }
 
 function escHtml(s) {
@@ -95,11 +154,13 @@ export class ChatGeneration {
     this.toolCalls = []
     this.terminal = null // { status, error } once the generation has settled
     this.persistedAt = 0
+    this.cancelRequested = false
   }
 
   async fetch(request) {
     const url = new URL(request.url)
     if (request.method === 'POST' && url.pathname === '/start') return this.start(request)
+    if (request.method === 'POST' && url.pathname === '/cancel') return this.cancel()
     if (request.method === 'GET' && url.pathname === '/stream') return this.openStream(request)
     return json({ error: 'Not found' }, 404)
   }
@@ -119,6 +180,22 @@ export class ChatGeneration {
     await this.state.storage.put('job', incoming)
     await this.state.storage.setAlarm(Date.now())
     return json({ ok: true, id: incoming.id }, 202)
+  }
+
+  async cancel() {
+    const job = await this.state.storage.get('job')
+    const terminal = this.terminal || await this.state.storage.get('terminal')
+    if (!job) {
+      return json({ ok: true, status: terminal?.status || 'cancelled' })
+    }
+
+    this.cancelRequested = true
+    await this.state.storage.put('cancelRequested', true)
+    await this.env.DB.prepare(
+      "UPDATE chat_generations SET status='cancelled', error=NULL, completed=? WHERE id=? AND user_id=? AND status IN ('queued','running')"
+    ).bind(Date.now(), job.id, job.userId).run().catch(() => {})
+    await this.settle({ status: 'cancelled' })
+    return json({ ok: true, status: 'cancelled' })
   }
 
   // Replays everything generated so far, then streams the rest live. A tab that
@@ -199,6 +276,7 @@ export class ChatGeneration {
   }
 
   async append(chunk) {
+    if (this.cancelRequested) return
     this.text += chunk
     this.broadcast('delta', { text: chunk })
     const now = Date.now()
@@ -211,6 +289,11 @@ export class ChatGeneration {
   async alarm() {
     const job = await this.state.storage.get('job')
     if (!job) return
+    this.cancelRequested = Boolean(await this.state.storage.get('cancelRequested'))
+    if (this.cancelRequested) {
+      await this.finishCancelledDrain()
+      return
+    }
 
     // The model already answered but the D1 commit failed. Retry only the
     // commit — re-running the model would charge the user a second time.
@@ -244,11 +327,49 @@ export class ChatGeneration {
       return
     }
 
+    const moderated = MODERATED_MODELS.has(job.requestBody?.model)
+    let held = ''
     try {
-      await this.consume(response.body)
+      held = await this.consume(response.body, { moderated })
     } catch (error) {
       await this.fail(job, `Lost the connection to Fresco: ${errorText(error)}`)
       return
+    }
+
+    if (this.cancelRequested) {
+      await this.finishCancelledDrain()
+      return
+    }
+
+    if (moderated && held) {
+      const lastUserMessage = [...(job.requestBody?.messages || [])].reverse()
+        .find(m => m.role === 'user')
+      const userText = lastUserMessage?.content || ''
+      const flagged = await judgeFlagged(job.token, userText, held)
+      await this.logGuardrailFlag(job, userText, held, flagged)
+      await this.append(flagged ? `${FLAGGED_MESSAGE_MARKER}${FLAGGED_MESSAGE_TEXT}` : held)
+    }
+
+    const artifactCalls = this.toolCalls.filter(call => call?.function?.name === 'create_cloud_artifact')
+    if (artifactCalls.length) {
+      const confirmations = []
+      for (const [index, artifactCall] of artifactCalls.entries()) {
+        if (this.cancelRequested) {
+          await this.finishCancelledDrain()
+          return
+        }
+        try {
+          confirmations.push(await this.createArtifact(job, artifactCall, index))
+        } catch (error) {
+          await this.fail(job, `Could not create the artifact: ${errorText(error)}`)
+          return
+        }
+      }
+      if (this.text && !this.text.endsWith('\n')) await this.append('\n\n')
+      await this.append(confirmations.join('\n'))
+      // The hosted worker executed these calls. Do not expose them as pending
+      // client-side tool calls, or another client could execute them again.
+      this.toolCalls = this.toolCalls.filter(call => call?.function?.name !== 'create_cloud_artifact')
     }
 
     if (!this.text && !this.toolCalls.length) {
@@ -267,12 +388,78 @@ export class ChatGeneration {
     await this.commitResult(job)
   }
 
+  // Logs every moderated-model verdict (SAFE and FLAG alike), not just the
+  // ones that got blocked — an admin needs the fire rate and false-positive
+  // rate, not just a count of blocked replies. Best-effort: a logging
+  // failure must never fail or delay the actual response to the user.
+  async logGuardrailFlag(job, userText, assistantText, flagged) {
+    try {
+      await this.env.DB.prepare(
+        'INSERT INTO guardrail_flags (id, generation_id, user_id, model, flagged, user_text, assistant_text, created_at) VALUES (?,?,?,?,?,?,?,?)'
+      ).bind(
+        crypto.randomUUID(),
+        job.id,
+        job.userId,
+        job.requestBody?.model || '',
+        flagged ? 1 : 0,
+        String(userText).slice(0, 4000),
+        String(assistantText).slice(0, 4000),
+        Date.now(),
+      ).run()
+    } catch {
+      // best-effort observability only
+    }
+  }
+
+  async createArtifact(job, call, index = 0) {
+    let input
+    try {
+      input = JSON.parse(call?.function?.arguments || '{}')
+    } catch {
+      return 'I could not create the artifact because the generated artifact details were invalid. Please try again.'
+    }
+    if (typeof input?.content !== 'string') {
+      return 'I could not create the artifact because it had no content. Please try again.'
+    }
+    if (input.content.length > ARTIFACT_CONTENT_LIMIT) {
+      return 'I could not create the artifact because its content was too large. Please ask for a smaller artifact.'
+    }
+
+    const title = String(input.title || 'Untitled').trim().slice(0, 200) || 'Untitled'
+    const kind = ARTIFACT_KINDS.has(input.kind) ? input.kind : 'text'
+    const language = kind === 'code' && input.language ? String(input.language).slice(0, 50) : null
+    // Deterministic IDs make an alarm retry idempotent if the artifact write
+    // succeeds but Durable Object storage is interrupted before result commit.
+    const id = `artifact-${job.id}${index ? `-${index + 1}` : ''}`
+    const revisionId = `${id}-revision-1`
+    const now = Date.now()
+    await this.env.DB.batch([
+      this.env.DB.prepare(
+        'INSERT OR IGNORE INTO artifact_revisions (id, artifact_id, content, created) VALUES (?,?,?,?)'
+      ).bind(revisionId, id, input.content, now),
+      this.env.DB.prepare(
+        `INSERT OR IGNORE INTO artifacts
+         (id, user_id, project_id, chat_id, title, kind, language, latest_revision_id, created, updated)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`
+      ).bind(id, job.userId, null, job.chatId, title, kind, language, revisionId, now, now),
+    ])
+    return `Created artifact “${title}” in your Sennoric account.`
+  }
+
   // Parses the upstream SSE stream, appending content deltas and accumulating
   // tool calls, which arrive in fragments indexed by position.
-  async consume(body) {
+  //
+  // When `moderated` is true, content deltas are buffered into `held` instead
+  // of being broadcast live — for a model with a documented safety gap, the
+  // guardrail has to run BEFORE anything reaches a viewer, not after, since a
+  // subscriber who already saw the raw tokens stream by can't un-see them.
+  // The held text is only revealed (via a single append()) once judgeFlagged
+  // has cleared it or replaced it in run().
+  async consume(body, { moderated = false } = {}) {
     const reader = body.getReader()
     const decoder = new TextDecoder()
     let pending = ''
+    let held = ''
 
     for (;;) {
       const { done, value } = await reader.read()
@@ -290,7 +477,11 @@ export class ChatGeneration {
         try { delta = JSON.parse(payload).choices?.[0]?.delta } catch { continue }
         if (!delta) continue
 
-        if (typeof delta.content === 'string' && delta.content) await this.append(delta.content)
+        if (this.cancelRequested) continue
+        if (typeof delta.content === 'string' && delta.content) {
+          if (moderated) held += delta.content
+          else await this.append(delta.content)
+        }
 
         for (const call of delta.tool_calls || []) {
           const index = call.index ?? 0
@@ -304,9 +495,14 @@ export class ChatGeneration {
     }
 
     this.toolCalls = this.toolCalls.filter(Boolean)
+    return held
   }
 
   async commitResult(job) {
+    if (this.cancelRequested || await this.state.storage.get('cancelRequested')) {
+      await this.finishCancelledDrain()
+      return
+    }
     let row
     try {
       row = await this.env.DB.prepare(
@@ -367,6 +563,10 @@ export class ChatGeneration {
   }
 
   async fail(job, message) {
+    if (this.cancelRequested || await this.state.storage.get('cancelRequested')) {
+      await this.finishCancelledDrain()
+      return
+    }
     await this.env.DB.prepare(
       "UPDATE chat_generations SET status='failed', error=?, completed=? WHERE id=? AND user_id=?"
     ).bind(errorText(message), Date.now(), job.id, job.userId).run().catch(() => {})
@@ -384,5 +584,15 @@ export class ChatGeneration {
     await this.state.storage.delete('partial')
     this.broadcast(terminal.status === 'failed' ? 'error' : 'done', terminal)
     this.closeSubscribers()
+  }
+
+  async finishCancelledDrain() {
+    this.cancelRequested = true
+    if (!this.terminal) await this.settle({ status: 'cancelled' })
+    await Promise.all([
+      this.state.storage.delete('job'),
+      this.state.storage.delete('partial'),
+      this.state.storage.delete('cancelRequested'),
+    ])
   }
 }

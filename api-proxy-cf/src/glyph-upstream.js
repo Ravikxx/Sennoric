@@ -15,11 +15,11 @@ function errorResponse(message, status = 502) {
 }
 
 // The model name vLLM was actually launched with (RunPod's GGUF auto-loader
-// syntax: "repo:quant_type"). Rewritten back to "veil" in the response so the
+// syntax: "repo:quant_type"). Rewritten back to "glyph" in the response so the
 // public API contract stays consistent regardless of the underlying HF repo.
 const SERVED_MODEL_NAME = 'AxionLabsAI/Veil-1.1:Q4_K_M'
 
-export async function proxyVeilRequest(body, env, fetchImpl = fetch) {
+export async function proxyGlyphRequest(body, env, fetchImpl = fetch) {
   const requestBody = { ...body, model: SERVED_MODEL_NAME }
   if (requestBody.stream) {
     requestBody.stream_options = { ...requestBody.stream_options, include_usage: true }
@@ -49,7 +49,7 @@ export async function proxyVeilRequest(body, env, fetchImpl = fetch) {
     const rewrite = new TransformStream({
       transform(chunk, controller) {
         const text = decoder.decode(chunk, { stream: true })
-        controller.enqueue(encoder.encode(text.replaceAll(`"model":"${SERVED_MODEL_NAME}"`, '"model":"veil"')))
+        controller.enqueue(encoder.encode(text.replaceAll(`"model":"${SERVED_MODEL_NAME}"`, '"model":"glyph"')))
       },
     })
     return new Response(upstream.body.pipeThrough(rewrite), {
@@ -62,7 +62,7 @@ export async function proxyVeilRequest(body, env, fetchImpl = fetch) {
   }
 
   const data = await upstream.text()
-  const rewritten = data.replaceAll(`"model":"${SERVED_MODEL_NAME}"`, '"model":"veil"')
+  const rewritten = data.replaceAll(`"model":"${SERVED_MODEL_NAME}"`, '"model":"glyph"')
   return new Response(rewritten, {
     status: 200,
     headers: { 'Content-Type': 'application/json; charset=utf-8' },
@@ -72,7 +72,7 @@ export async function proxyVeilRequest(body, env, fetchImpl = fetch) {
 // RunPod Serverless scales to zero when idle — that's the normal steady
 // state, not a failure. "Healthy" here means the endpoint exists and RunPod's
 // API is reachable, not that a worker happens to be warm right now.
-export async function probeVeilHealth(env, fetchImpl = fetch, timeoutMs = 6000) {
+export async function probeGlyphHealth(env, fetchImpl = fetch, timeoutMs = 6000) {
   try {
     const response = await fetchImpl(`https://api.runpod.ai/v2/${env.RUNPOD_VEIL_ENDPOINT_ID}/health`, {
       headers: { Authorization: `Bearer ${env.RUNPOD_API_KEY}` },
@@ -84,7 +84,7 @@ export async function probeVeilHealth(env, fetchImpl = fetch, timeoutMs = 6000) 
   }
 }
 
-export const VEIL_UPSTREAM_URLS = {
+export const GLYPH_UPSTREAM_URLS = {
   chat: (env) => `${runpodBaseUrl(env)}/chat/completions`,
   health: (env) => `https://api.runpod.ai/v2/${env.RUNPOD_VEIL_ENDPOINT_ID}/health`,
 }

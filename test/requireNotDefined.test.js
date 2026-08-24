@@ -37,7 +37,7 @@ test('no bare require() calls remain in agent.js, tools.js, or teamStore.js', ()
 });
 
 test('_resolveHistory() does not throw once history exceeds the 12-message partitioning threshold', async () => {
-  const agent = new Agent({ modelAlias: 'lumen', mode: 'auto', onTokens: () => {} });
+  const agent = new Agent({ modelAlias: 'fresco', mode: 'auto', onTokens: () => {} });
   agent.history = Array.from({ length: 20 }, (_, i) => ({
     role: i % 2 === 0 ? 'user' : 'assistant',
     content: `message ${i}`,

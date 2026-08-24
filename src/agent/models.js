@@ -1,4 +1,3 @@
-import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { MODELS, MODEL_PROVIDERS, API_KEYS, BASE_URLS, CUSTOM_ENDPOINTS, REASONING_CONFIGS, PROVIDER_STRIP_FIELDS } from '../config.js';
 import { getAxionKey } from '../persist.js';
@@ -6,7 +5,7 @@ import { ProviderError } from '../utils/namedError.js';
 
 // ── Sennoric-hosted provider credential seam ─────────────────────────────────
 //
-// veil/lumen/axion-vision authenticate to the Worker with a Bearer credential
+// fresco/glyph/axion-vision authenticate to the Worker with a Bearer credential
 // that can be either a persisted axion-sk- API key (set via /axion-key, the
 // CLI-native flow) or a host application's own account session token — the
 // Worker's /v1/chat/completions accepts both interchangeably. A host that
@@ -82,25 +81,37 @@ export function applyTransportShim(body, modelAlias) {
   return body;
 }
 
+// Pre-rename model aliases that may still be persisted in saved sessions or
+// user preferences. Resolved to their current Sennoric equivalents so old
+// data does not crash createClient() with "Unknown provider".
+const MODEL_ALIAS_LEGACY = { lumen: 'fresco', veil: 'glyph', Lumen: 'fresco', Veil: 'glyph' };
+
+function normalizeModelAlias(alias) {
+  if (!alias) return alias;
+  return MODEL_ALIAS_LEGACY[alias] || alias;
+}
+
 export function resolveModel(alias) {
-  const lower = alias.toLowerCase();
-  if (CUSTOM_ENDPOINTS[alias]) return CUSTOM_ENDPOINTS[alias].model || alias;
-  return MODELS[alias] || MODELS[lower] || alias;
+  const normalized = normalizeModelAlias(alias);
+  const lower = normalized.toLowerCase();
+  if (CUSTOM_ENDPOINTS[normalized]) return CUSTOM_ENDPOINTS[normalized].model || normalized;
+  return MODELS[normalized] || MODELS[lower] || normalized;
 }
 
 export function resolveProvider(alias) {
-  const lower = alias.toLowerCase();
-  if (MODEL_PROVIDERS[alias]) return MODEL_PROVIDERS[alias];
+  const normalized = normalizeModelAlias(alias);
+  const lower = normalized.toLowerCase();
+  if (MODEL_PROVIDERS[normalized]) return MODEL_PROVIDERS[normalized];
   if (MODEL_PROVIDERS[lower]) return MODEL_PROVIDERS[lower];
   // Named custom endpoint
-  if (CUSTOM_ENDPOINTS[alias]) return 'custom';
+  if (CUSTOM_ENDPOINTS[normalized]) return 'custom';
 
-  if (/^claude/i.test(alias))                                              return 'anthropic';
-  if (/^(gpt|o1|o3|o4|chatgpt|text-|dall-e)/i.test(alias))               return 'openai';
-  if (/^gemini/i.test(alias))                                              return 'gemini';
-  if (/^(mistral|codestral|pixtral|magistral|open-mistral)/i.test(alias)) return 'mistral';
-  if (/^(llama|mixtral|gemma|qwen|deepseek|whisper)/i.test(alias))        return 'groq';
-  if (/^opencode/i.test(alias))                                            return 'opencode';
+  if (/^claude/i.test(normalized))                                              return 'anthropic';
+  if (/^(gpt|o1|o3|o4|chatgpt|text-|dall-e)/i.test(normalized))               return 'openai';
+  if (/^gemini/i.test(normalized))                                              return 'gemini';
+  if (/^(mistral|codestral|pixtral|magistral|open-mistral)/i.test(normalized)) return 'mistral';
+  if (/^(llama|mixtral|gemma|qwen|deepseek|whisper)/i.test(normalized))        return 'groq';
+  if (/^opencode/i.test(normalized))                                            return 'opencode';
 
   return 'openai';
 }
@@ -108,78 +119,22 @@ export function resolveProvider(alias) {
 export function createClient(modelAlias) {
   const provider = resolveProvider(modelAlias);
 
-  if (provider === 'anthropic') {
-    const key = API_KEYS.anthropic;
-    if (!key) throw new ProviderError({ provider: 'anthropic', message: 'ANTHROPIC_API_KEY not set — use /api claude <key>' });
-    return { type: 'anthropic', client: new Anthropic({ apiKey: key }) };
-  }
-
-  if (provider === 'openai') {
-    const key = API_KEYS.openai;
-    if (!key) throw new ProviderError({ provider: 'openai', message: 'OPENAI_API_KEY not set — use /api gpt <key>' });
-    return { type: 'openai', client: new OpenAI({ apiKey: key }) };
-  }
-
-  if (provider === 'groq') {
-    const key = API_KEYS.groq;
-    if (!key) throw new ProviderError({ provider: 'groq', message: 'GROQ_API_KEY not set — use /api groq <key>' });
-    return { type: 'openai', client: new OpenAI({ apiKey: key, baseURL: BASE_URLS.groq }) };
-  }
-
-  if (provider === 'mistral') {
-    const key = API_KEYS.mistral;
-    if (!key) throw new ProviderError({ provider: 'mistral', message: 'MISTRAL_API_KEY not set — use /api mistral <key>' });
-    return { type: 'openai', client: new OpenAI({ apiKey: key, baseURL: BASE_URLS.mistral }) };
-  }
-
-  if (provider === 'gemini') {
-    const key = API_KEYS.gemini;
-    if (!key) throw new ProviderError({ provider: 'gemini', message: 'GEMINI_API_KEY not set — use /api gemini <key>' });
-    return { type: 'openai', client: new OpenAI({ apiKey: key, baseURL: BASE_URLS.gemini }) };
-  }
-
   if (provider === 'custom') {
     const ep = CUSTOM_ENDPOINTS[modelAlias];
     if (!ep) throw new ProviderError({ provider: 'custom', message: `No endpoint named "${modelAlias}" — use /endpoint <name> <url>` });
     return { type: 'openai', client: new OpenAI({ apiKey: ep.apiKey || 'no-key', baseURL: ep.baseURL }) };
   }
 
-  if (provider === 'ollama') {
-    return { type: 'openai', client: new OpenAI({ apiKey: 'ollama', baseURL: BASE_URLS.ollama }) };
-  }
-
-  if (provider === 'veil') {
+  if (provider === 'sennoric') {
     const axionKey = resolveAxionAuth();
     if (!axionKey) {
       throw new ProviderError({
-        provider: 'veil',
-        message: 'Sennoric-hosted models require an Sennoric account and API key — use /login, or set a key with /axion-key <your-key>.',
+        provider: 'sennoric',
+        message: 'Sennoric-hosted models require a Sennoric account and API key — use /login, or set a key with /axion-key <your-key>.',
       });
     }
-    return { type: 'veil', client: new OpenAI({ apiKey: axionKey, baseURL: BASE_URLS.veil }) };
-  }
-
-  if (provider === 'opencode') {
-    const key = API_KEYS.opencode;
-    if (!key) throw new ProviderError({ provider: 'opencode', message: 'OpenCode Zen is not connected. Choose another model.' });
-    // OpenCode Zen authenticates via x-api-key and 401s on a Bearer header,
-    // so strip the SDK's default Authorization header.
-    return { type: 'openai', client: new OpenAI({
-      apiKey: key,
-      baseURL: BASE_URLS.opencode,
-      defaultHeaders: { Authorization: null, 'x-api-key': key },
-    }) };
-  }
-
-  if (provider === 'lumen') {
-    const axionKey = resolveAxionAuth();
-    if (!axionKey) {
-      throw new ProviderError({
-        provider: 'lumen',
-        message: 'Lumen requires an Sennoric account and API key — use /login, or set a key with /axion-key <your-key>.',
-      });
-    }
-    return { type: 'openai', client: new OpenAI({ apiKey: axionKey, baseURL: BASE_URLS.lumen }) };
+    const baseURL = BASE_URLS[modelAlias] || 'https://api.sennoric.com/v1';
+    return { type: 'openai', client: new OpenAI({ apiKey: axionKey, baseURL }) };
   }
 
   if (provider === 'axion-vision') {
@@ -187,29 +142,10 @@ export function createClient(modelAlias) {
     if (!axionKey) {
       throw new ProviderError({
         provider: 'axion-vision',
-        message: 'Sennoric Vision requires an Sennoric account and API key — use /login, or set a key with /axion-key <your-key>.',
+        message: 'Sennoric Vision requires a Sennoric account and API key — use /login, or set a key with /axion-key <your-key>.',
       });
     }
     return { type: 'openai', client: new OpenAI({ apiKey: axionKey, baseURL: BASE_URLS['axion-vision'] }) };
-  }
-
-  if (provider === 'zai') {
-    const key = API_KEYS.zai;
-    if (!key) throw new ProviderError({ provider: 'zai', message: 'ZAI_API_KEY not set — use /api glm <key>' });
-    return { type: 'openai', client: new OpenAI({ apiKey: key, baseURL: BASE_URLS.zai }) };
-  }
-
-  if (provider === 'openrouter') {
-    const key = API_KEYS.openrouter;
-    if (!key) throw new ProviderError({ provider: 'openrouter', message: 'OPENROUTER_API_KEY not set — use /api openrouter <key>' });
-    return { type: 'openai', client: new OpenAI({
-      apiKey: key,
-      baseURL: BASE_URLS.openrouter,
-      defaultHeaders: {
-        'HTTP-Referer': 'https://sennoric.com',
-        'X-Title': 'Sennoric',
-      },
-    }) };
   }
 
   throw new ProviderError({ provider: modelAlias, message: `Unknown provider for model: ${modelAlias}` });

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MODELS, MODEL_PROVIDERS, CONTEXT_WINDOWS } from '../src/config.js';
+import { MODELS, MODEL_PROVIDERS, CONTEXT_WINDOWS, CUSTOM_ENDPOINTS } from '../src/config.js';
 import { createClient, resolveModel, resolveProvider, setAxionAuthResolver } from '../src/agent/models.js';
 
 // ── Model list ─────────────────────────────────────────────────────────────────
@@ -9,10 +9,13 @@ test('MODELS has entries', () => {
   assert.ok(Object.keys(MODELS).length > 0);
 });
 
-test('MODELS has claude, gpt, gemini', () => {
-  assert.ok(MODELS['claude']);
-  assert.ok(MODELS['gpt']);
-  assert.ok(MODELS['gemini']);
+test('MODELS only exposes Sennoric-hosted chat models', () => {
+  assert.ok(MODELS['fresco']);
+  assert.ok(MODELS['glyph']);
+  // No third-party provider models remain
+  for (const alias of Object.keys(MODELS)) {
+    assert.ok(['fresco', 'glyph'].includes(alias), `unexpected model: ${alias}`);
+  }
 });
 
 test('MODELS values are strings (model IDs)', () => {
@@ -26,7 +29,6 @@ test('MODELS values are strings (model IDs)', () => {
 test('MODEL_PROVIDERS covers all MODELS keys', () => {
   for (const alias of Object.keys(MODELS)) {
     const found = MODEL_PROVIDERS[alias] || MODEL_PROVIDERS[alias.toLowerCase()];
-    // Some aliases don't have explicit entries — resolveProvider handles via regex fallback
     if (!found) {
       const provider = resolveProvider(alias);
       assert.ok(provider, `No provider found for alias "${alias}"`);
@@ -37,9 +39,9 @@ test('MODEL_PROVIDERS covers all MODELS keys', () => {
 // ── resolveModel ───────────────────────────────────────────────────────────────
 
 test('resolveModel returns model ID for known alias', () => {
-  assert.equal(resolveModel('claude'), 'claude-sonnet-4-6');
-  assert.equal(resolveModel('gpt'), 'gpt-4o');
-  assert.equal(resolveModel('gemini'), 'gemini-2.0-flash');
+  assert.equal(resolveModel('fresco'), 'fresco');
+  assert.equal(resolveModel('glyph'), 'glyph');
+  assert.equal(resolveModel('axion-vision'), 'axion-vision');
 });
 
 test('resolveModel passthrough for unknown alias', () => {
@@ -48,24 +50,19 @@ test('resolveModel passthrough for unknown alias', () => {
 
 // ── resolveProvider ────────────────────────────────────────────────────────────
 
-test('resolveProvider returns provider for known aliases', () => {
-  assert.equal(resolveProvider('claude'), 'anthropic');
-  assert.equal(resolveProvider('gpt'), 'openai');
-  assert.equal(resolveProvider('gemini'), 'gemini');
-  assert.equal(resolveProvider('groq'), 'groq');
-  assert.equal(resolveProvider('mistral'), 'mistral');
-  assert.equal(resolveProvider('ollama'), 'ollama');
-  assert.equal(resolveProvider('opencode'), 'opencode');
+test('resolveProvider returns sennoric for Sennoric-hosted models', () => {
+  assert.equal(resolveProvider('fresco'), 'sennoric');
+  assert.equal(resolveProvider('glyph'), 'sennoric');
+  assert.equal(resolveProvider('axion-vision'), 'axion-vision');
+  CUSTOM_ENDPOINTS['rp-test'] = { baseURL: 'http://localhost:9999/v1', apiKey: 'k', model: 'm' };
+  try {
+    assert.equal(resolveProvider('rp-test'), 'custom');
+  } finally {
+    delete CUSTOM_ENDPOINTS['rp-test'];
+  }
 });
 
-test('resolveProvider uses regex fallback', () => {
-  // Not in MODEL_PROVIDERS, but matches regex
-  assert.equal(resolveProvider('gpt-4o'), 'openai');
-  assert.equal(resolveProvider('claude-sonnet-4'), 'anthropic');
-  assert.equal(resolveProvider('gemini-2.0-flash'), 'gemini');
-});
-
-test('resolveProvider returns openai as default unknown', () => {
+test('resolveProvider routes unknown aliases to openai by default', () => {
   assert.equal(resolveProvider('completely-unknown-model-name-xyz'), 'openai');
 });
 
@@ -90,11 +87,11 @@ test('context windows are positive integers', () => {
 // and that a falsy resolver result is indistinguishable from no resolver at
 // all having been registered.
 
-test('createClient prefers the registered Sennoric auth resolver for lumen/veil/axion-vision', () => {
+test('createClient prefers the registered Sennoric auth resolver for fresco/glyph/axion-vision', () => {
   setAxionAuthResolver(() => 'resolver-supplied-token');
   try {
-    assert.equal(createClient('lumen').client.apiKey, 'resolver-supplied-token');
-    assert.equal(createClient('veil').client.apiKey, 'resolver-supplied-token');
+    assert.equal(createClient('fresco').client.apiKey, 'resolver-supplied-token');
+    assert.equal(createClient('glyph').client.apiKey, 'resolver-supplied-token');
     assert.equal(createClient('axion-vision').client.apiKey, 'resolver-supplied-token');
   } finally {
     setAxionAuthResolver(null);
@@ -103,7 +100,7 @@ test('createClient prefers the registered Sennoric auth resolver for lumen/veil/
 
 test('a resolver returning a falsy value behaves identically to no resolver registered', () => {
   const attempt = () => {
-    try { return createClient('lumen'); } catch (error) { return error; }
+    try { return createClient('fresco'); } catch (error) { return error; }
   };
   const baseline = attempt();
 
@@ -125,15 +122,14 @@ test('setAxionAuthResolver ignores a non-function argument instead of throwing',
   setAxionAuthResolver(null);
 });
 
-test('providers unrelated to Sennoric accounts never see the resolver value', () => {
+test('a custom endpoint uses its own key and never sees the Sennoric resolver value', () => {
   setAxionAuthResolver(() => 'should-never-leak-here');
+  CUSTOM_ENDPOINTS['leaktest'] = { baseURL: 'http://localhost:9999/v1', apiKey: 'ep-key', model: 'x' };
   try {
-    let result;
-    try { result = createClient('claude'); } catch (error) { result = error; }
-    if (!(result instanceof Error)) {
-      assert.notEqual(result.client.apiKey, 'should-never-leak-here');
-    }
+    const result = createClient('leaktest');
+    assert.equal(result.client.apiKey, 'ep-key');
   } finally {
+    delete CUSTOM_ENDPOINTS['leaktest'];
     setAxionAuthResolver(null);
   }
 });

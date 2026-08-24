@@ -10,7 +10,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "test": "node --test test/*.test.mjs",
-    "check": "node --check src/index.js && node --check src/avatar.js && node --check src/billing.js && node --check src/chatGeneration.js && node --check src/lumen-upstream.js && node --check src/veil-upstream.js && node --check src/status.js && node --check src/sandbox.js && node --check src/auditLog.js && node --check src/messageReview.js && node --check src/moderationAdmin.js && node --check src/webOrigins.js"
+    "check": "node --check src/index.js && node --check src/avatar.js && node --check src/billing.js && node --check src/chatGeneration.js && node --check src/fresco-upstream.js && node --check src/glyph-upstream.js && node --check src/status.js && node --check src/sandbox.js && node --check src/auditLog.js && node --check src/messageReview.js && node --check src/moderationAdmin.js && node --check src/webOrigins.js"
   },
   "dependencies": {
     "hono": "^4.4.0"

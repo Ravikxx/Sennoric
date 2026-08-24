@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useKeyboard, useTerminalDimensions, useRenderer, useSelectionHandler, usePaste } from '@opentui/react';
 import { accent, THEMES, setTheme, themeName } from '../ui/theme.js';
-import { Agent } from '../agent/agent.js';
+import { Agent, isAxionHostedProvider } from '../agent/agent.js';
 import { MODELS, CONTEXT_WINDOWS, getContextWindow, estimateCost, API_KEYS, VISION_MODEL, VIDEO_MODEL, AUDIO_MODEL } from '../config.js';
 import {
   getTodos, saveModel, saveMode, getSavedTheme, saveTheme, getAllowedTools, allowTool, autosaveSession, autosaveWorkspace, clearLastSession, clearWorkspace, clearTodos,
@@ -137,7 +137,7 @@ let onboardingDone = false;
 // First-run welcome: one smart text question (key type is detected on submit).
 const ONBOARDING_FORM = {
   questions: [{
-    question: 'Welcome to Sennoric 👋  Lumen requires a free Sennoric account. Paste an Sennoric API key, or an Anthropic/OpenAI key for those providers. Leave blank to sign in later with /login.',
+    question: 'Welcome to Sennoric 👋  Fresco requires a free Sennoric account. Paste a Sennoric API key, or an Anthropic/OpenAI key for those providers. Leave blank to sign in later with /login.',
     type: 'text',
     placeholder: 'paste an API key, or press Enter to skip',
   }],
@@ -494,7 +494,7 @@ function SubagentView({ msg, onClose, scrollRef }) {
 }
 
 function Session({
-  initialModel = 'lumen', initialMode = 'ask', initialResume = null,
+  initialModel = 'fresco', initialMode = 'ask', initialResume = null,
   onExit = () => process.exit(0),
   isActive = true, initialPrompt = null,
   onTitleChange, onNewTab, onCloseTab, onSwitchTab, onBusyChange, onSnapshot, onSessionEnded,
@@ -1906,7 +1906,7 @@ function Session({
         const known = !!(MODELS[target] || MODELS[target.toLowerCase()] || CUSTOM_ENDPOINTS[target]);
         const provider = resolveProvider(target);
         const noKeyNeeded = ['custom', 'ollama'].includes(provider);
-        const axionHosted = ['lumen', 'axion-vision', 'veil'].includes(provider);
+        const axionHosted = isAxionHostedProvider(provider);
         const hasKey = noKeyNeeded || !!API_KEYS[provider] || (axionHosted && !!getAxionKey());
         agentRef.current?.setAdviserModel(target); saveAdviserModel(target);
         const note = !hasKey
@@ -2128,7 +2128,7 @@ function Session({
       case 'api': {
         const [apiTarget, apiKey] = args;
         if (!apiTarget || !apiKey) { push({ type: 'error', text: 'usage: /api <model> <key>' }); return; }
-        if (apiTarget === 'lumen' || apiTarget === 'axion') { return runCommand(`/axion-key ${apiKey}`); }
+        if (apiTarget === 'fresco' || apiTarget === 'axion') { return runCommand(`/axion-key ${apiKey}`); }
         try {
           const { setApiKey } = await import('../config.js');
           const provider = setApiKey(apiTarget, apiKey);
@@ -2141,10 +2141,10 @@ function Session({
         const [keyArg] = args;
         if (!keyArg) {
           const existing = getAxionKey();
-          push({ type: 'info', text: existing ? `Sennoric API key: ${existing.slice(0, 14)}••••••••` : 'No Sennoric API key set. Lumen requires a free Sennoric account.\nUse /login, or /axion-key <your-axion-sk-key>.' });
+          push({ type: 'info', text: existing ? `Sennoric API key: ${existing.slice(0, 14)}••••••••` : 'No Sennoric API key set. Fresco requires a free Sennoric account.\nUse /login, or /axion-key <your-axion-sk-key>.' });
           return;
         }
-        if (keyArg === 'remove') { saveAxionKey(null); push({ type: 'info', text: 'Sennoric API key removed. Lumen is unavailable until you use /login or set another Sennoric key.' }); return; }
+        if (keyArg === 'remove') { saveAxionKey(null); push({ type: 'info', text: 'Sennoric API key removed. Fresco is unavailable until you use /login or set another Sennoric key.' }); return; }
         if (keyArg === 'test') {
           const testKey = getAxionKey();
           if (!testKey) { push({ type: 'error', text: 'No Sennoric key set.' }); return; }
@@ -2152,9 +2152,9 @@ function Session({
           fetch('https://api.sennoric.com/v1/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${testKey}` },
-            body: JSON.stringify({ model: 'lumen', messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 }),
+            body: JSON.stringify({ model: 'fresco', messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 }),
           }).then(async r => {
-            if (r.status === 200) push({ type: 'info', text: 'Key is valid. Lumen is reachable.' });
+            if (r.status === 200) push({ type: 'info', text: 'Key is valid. Fresco is reachable.' });
             else if (r.status === 401) push({ type: 'error', text: 'Key rejected by server (401). Generate a fresh key at sennoric.com/keys' });
             else if (r.status === 429) push({ type: 'info', text: 'Key is valid but rate-limited.' });
             else push({ type: 'error', text: `Unexpected response: HTTP ${r.status}` });
@@ -2206,6 +2206,28 @@ function Session({
         setModel(epName); agentRef.current?.setModel(epName); try { saveModel(epName); } catch {}
         const ctxInfo = context ? ` · context: ${context >= 1_000_000 ? (context / 1_000_000).toFixed(1) + 'M' : (context / 1000).toFixed(0) + 'k'}` : '';
         push({ type: 'info', text: `Endpoint "${epName}" saved → ${epURL}\nSwitched to "${epName}"${ctxInfo}` });
+        return;
+      }
+      case 'create-external-model': {
+        // Developer-only command: register an external OpenAI-compatible model
+        // as a usable model. Intentionally absent from COMMANDS (src/ui/commands.js)
+        // so it never appears in tab-completion or the command palette.
+        const { CUSTOM_ENDPOINTS, CONTEXT_WINDOWS } = await import('../config.js');
+        const [epURL, epModel, ...keyParts] = args;
+        const epKey = keyParts.join(' ').trim() || 'no-key';
+        if (!epURL || !/^https?:\/\//i.test(epURL)) {
+          push({ type: 'error', text: 'usage: /create-external-model <https://url> <model name> <api key>' });
+          return;
+        }
+        if (!epModel) {
+          push({ type: 'error', text: 'missing model name — usage: /create-external-model <https://url> <model name> <api key>' });
+          return;
+        }
+        CUSTOM_ENDPOINTS[epModel] = { baseURL: epURL, model: epModel, apiKey: epKey, context: 0 };
+        CONTEXT_WINDOWS[epModel] = CUSTOM_ENDPOINTS[epModel].context || 0;
+        saveCustomEndpoints({ ...CUSTOM_ENDPOINTS });
+        setModel(epModel); agentRef.current?.setModel(epModel); try { saveModel(epModel); } catch {}
+        push({ type: 'info', text: `External model "${epModel}" registered → ${epURL}${epKey !== 'no-key' ? ' (api key set)' : ' (no api key)'}\nSwitched to "${epModel}".` });
         return;
       }
       case 'skills': {
@@ -3039,7 +3061,7 @@ function Session({
   // Save whatever key the user pasted during onboarding (type detected by prefix).
   const finishOnboarding = useCallback((key) => {
     const k = (key || '').trim();
-    if (!k) { push({ type: 'info', text: 'No key saved. Use /login for a free Sennoric account before using Lumen, or add another provider with /api.' }); return; }
+    if (!k) { push({ type: 'info', text: 'No key saved. Use /login for a free Sennoric account before using Fresco, or add another provider with /api.' }); return; }
     if (k.startsWith('sk-ant-')) {
       saveApiKey('anthropic', k); API_KEYS.anthropic = k;
       setModel('claude'); agentRef.current?.setModel('claude'); try { saveModel('claude'); } catch {}
@@ -3381,7 +3403,7 @@ function TabBar({ tabs, activeId, width, accentColor, onSwitchTab, onNewTab, onC
   );
 }
 
-export function App({ initialModel = 'lumen', initialMode = 'ask', initialResume = null, initialTabs = null, initialPrompt = null, onExit = () => process.exit(0) }) {
+export function App({ initialModel = 'fresco', initialMode = 'ask', initialResume = null, initialTabs = null, initialPrompt = null, onExit = () => process.exit(0) }) {
   const { width, height } = useTerminalDimensions();
   const A = accent();
   // Build the opening tab set: a restored multi-tab workspace, or a single tab.

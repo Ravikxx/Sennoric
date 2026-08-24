@@ -134,10 +134,10 @@ function attachShell(ws) {
 // Local/custom providers can be used without a hosted-provider key. Sennoric
 // hosted models require the account key created by /login or /axion-key.
 const KEYLESS_PROVIDERS = new Set(['ollama', 'custom']);
-const AXION_ACCOUNT_PROVIDERS = new Set(['lumen', 'veil', 'axion-vision']);
+const AXION_ACCOUNT_PROVIDERS = new Set(['fresco', 'glyph', 'axion-vision']);
 
 function availableModels() {
-  const current = getSavedModel() || 'lumen';
+  const current = getSavedModel() || 'fresco';
   const out = [];
   for (const alias of Object.keys(MODELS)) {
     const provider = resolveProvider(alias);
@@ -161,7 +161,7 @@ function attachAppSession(ws) {
     }
   };
 
-  let model = getSavedModel() || 'lumen';
+  let model = getSavedModel() || 'fresco';
   let agent = null;
   let busy = false;
   let shellProc = null;

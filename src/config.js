@@ -11,103 +11,25 @@ else if (existsSync(homeEnv)) config({ path: homeEnv });
 else config();
 
 export const MODELS = {
-  claude:                 'claude-sonnet-4-6',
-  'claude-opus-4.8':      'claude-opus-4-8',
-  'claude-haiku-4.5':     'claude-haiku-4-5-20251001',
-  fable:                  'claude-fable-5',
-  gpt:                    'gpt-4o',
-  'gpt-mini':             'gpt-4o-mini',
-  'gpt-sol':              'gpt-5.6-sol',
-  'gpt-terra':            'gpt-5.6-terra',
-  'gpt-luna':             'gpt-5.6-luna',
-  'gpt-sol-pro':          'gpt-5.6-sol-pro',
-  'gpt-terra-pro':        'gpt-5.6-terra-pro',
-  'gpt-luna-pro':         'gpt-5.6-luna-pro',
-  groq:                   'llama-3.3-70b-versatile',
-  'groq-fast':            'llama-3.1-8b-instant',
-  mistral:                'mistral-large-latest',
-  'mistral-small':        'mistral-small-latest',
-  gemini:                 'gemini-2.0-flash',
-  'gemini-pro':           'gemini-1.5-pro',
-  'gemini-2.5-pro':       'gemini-2.5-pro-preview-05-06',
-  'gemini-2.5-flash':     'gemini-2.5-flash',
-  openrouter:             'meta-llama/llama-3.3-70b-instruct',
-  'or':                   'meta-llama/llama-3.3-70b-instruct',
-  ollama:                 'llama3',
-  veil:                   'veil',
-  lumen:                  'lumen',
-  'axion-vision':         'axion-vision',
-  opencode:               'opencode',
-  'big-pickle':           'big-pickle',
-  glm:                    'glm-5.2',
-  'glm-flash':            'glm-4.7-flash',
-  'glm-4.5-flash':        'glm-4.5-flash',
+  fresco: 'fresco',
+  glyph:  'glyph',
 };
 
 export const MODEL_PROVIDERS = {
-  claude:                 'anthropic',
-  'claude-opus-4.8':      'anthropic',
-  'claude-haiku-4.5':     'anthropic',
-  fable:                  'anthropic',
-  gpt:                    'openai',
-  'gpt-mini':             'openai',
-  'gpt-sol':              'openai',
-  'gpt-terra':            'openai',
-  'gpt-luna':             'openai',
-  'gpt-sol-pro':          'openai',
-  'gpt-terra-pro':        'openai',
-  'gpt-luna-pro':         'openai',
-  groq:                   'groq',
-  'groq-fast':            'groq',
-  mistral:                'mistral',
-  'mistral-small':        'mistral',
-  gemini:                 'gemini',
-  'gemini-pro':           'gemini',
-  'gemini-2.5-pro':       'gemini',
-  'gemini-2.5-flash':     'gemini',
-  openrouter:             'openrouter',
-  'or':                   'openrouter',
-  ollama:                 'ollama',
-  veil:                   'veil',
-  lumen:                  'lumen',
-  'axion-vision':         'axion-vision',
-  opencode:               'opencode',
-  'big-pickle':           'opencode',
-  glm:                    'zai',
-  'glm-flash':            'zai',
-  'glm-4.5-flash':        'zai',
+  fresco:         'sennoric',
+  glyph:          'sennoric',
+  'axion-vision': 'axion-vision',
 };
 
 export const API_KEYS = {
-  anthropic:   process.env.ANTHROPIC_API_KEY,
-  openai:      process.env.OPENAI_API_KEY,
-  groq:        process.env.GROQ_API_KEY,
-  mistral:     process.env.MISTRAL_API_KEY,
-  gemini:      process.env.GEMINI_API_KEY,
-  openrouter:  process.env.OPENROUTER_API_KEY,
   tavily:      process.env.TAVILY_API_KEY,
   sketchfab:   process.env.SKETCHFAB_API_KEY,
-  zai:         process.env.ZAI_API_KEY,
-  veil:        process.env.VEIL_API_KEY,
-  opencode:    process.env.OPENCODE_API_KEY,
 };
 
 export const BASE_URLS = {
-  groq:        'https://api.groq.com/openai/v1',
-  mistral:     'https://api.mistral.ai/v1',
-  gemini:      'https://generativelanguage.googleapis.com/v1beta/openai/',
-  openrouter:  'https://openrouter.ai/api/v1',
-  ollama:        'http://localhost:11434/v1',
-  // Veil moved off its old HuggingFace Space onto the Worker's RunPod-backed
-  // proxy (api-proxy-cf/src/veil-upstream.js) — same endpoint as Lumen; the
-  // Worker dispatches on body.model. Veil is retiring 2026-08-17 with no
-  // replacement; remove the model entirely around that date rather than
-  // updating this URL again.
-  veil:          'https://api.sennoric.com/v1',
-  lumen:         'https://api.sennoric.com/v1',
+  fresco:         'https://api.sennoric.com/v1',
+  glyph:          'https://api.sennoric.com/v1',
   'axion-vision': 'https://axionlabsai-lumenvision.hf.space/v1',
-  opencode:      'https://opencode.ai/zen/v1',
-  zai:         'https://api.z.ai/api/paas/v4',
 };
 
 // Named custom endpoints — mutated at runtime via /endpoint command.
@@ -155,33 +77,18 @@ export const IMAGE_GEN_MODEL = { current: process.env.AXION_IMAGE_MODEL || 'dall
 export function setApiKey(modelOrProvider, key) {
   const provider = MODEL_PROVIDERS[modelOrProvider] || modelOrProvider;
   if (!Object.prototype.hasOwnProperty.call(API_KEYS, provider)) {
-    throw new Error(`Unknown provider "${provider}". Valid: anthropic, openai, groq, mistral, gemini, openrouter, opencode, zai, tavily, sketchfab`);
+    throw new Error(`Unknown provider "${provider}". Valid: tavily, sketchfab`);
   }
   API_KEYS[provider] = key;
   return provider;
 }
 
-// Context window sizes (input tokens) per model ID
+// Context window sizes (input tokens) per model ID. Sennoric-hosted models
+// are served by the Worker, which doesn't expose a fixed context window here;
+// callers fall back to the default below when no entry matches.
 export const CONTEXT_WINDOWS = {
-  'claude-sonnet-4-6':              200_000,
-  'claude-opus-4-8':                200_000,
-  'claude-haiku-4-5-20251001':      200_000,
-  'claude-fable-5':                 200_000,
-  'gpt-4o':                         128_000,
-  'gpt-4o-mini':                    128_000,
-  'gpt-5.6-sol':                  1_500_000,
-  'gpt-5.6-terra':                1_050_000,
-  'gpt-5.6-luna':                 1_500_000,
-  'gpt-5.6-sol-pro':              1_500_000,
-  'gpt-5.6-terra-pro':            1_050_000,
-  'gpt-5.6-luna-pro':             1_500_000,
-  'gemini-2.0-flash':             1_000_000,
-  'gemini-2.5-pro-preview-05-06': 1_000_000,
-  'gemini-2.5-flash':              1_000_000,
-  'llama-3.3-70b-versatile':        128_000,
-  'llama-3.1-8b-instant':           128_000,
-  'mistral-large-latest':           128_000,
-  'mistral-small-latest':           32_000,
+  'fresco':        128_000,
+  'glyph':          32_000,
 };
 
 export function getContextWindow(modelAlias) {
@@ -195,27 +102,15 @@ export function getContextWindow(modelAlias) {
 export const PROVIDER_MODELS = {};
 
 // Fallback models shown when a provider's API key isn't set (so users can still
-// see and try known models even without configuring every key).
+// see and try known models even without configuring every key). Only Sennoric
+// models are exposed now.
 const FALLBACK_MODELS = {
-  openai:     [{ id: 'gpt-4o', context_length: 128_000 }, { id: 'gpt-4o-mini', context_length: 128_000 }, { id: 'gpt-4.1', context_length: 1_000_000 }, { id: 'o3', context_length: 200_000 }, { id: 'o4-mini', context_length: 200_000 }, { id: 'gpt-5.6-sol', context_length: 1_500_000 }, { id: 'gpt-5.6-terra', context_length: 1_050_000 }, { id: 'gpt-5.6-luna', context_length: 1_500_000 }, { id: 'gpt-5.6-sol-pro', context_length: 1_500_000 }, { id: 'gpt-5.6-terra-pro', context_length: 1_050_000 }, { id: 'gpt-5.6-luna-pro', context_length: 1_500_000 }],
-  anthropic:  [{ id: 'claude-sonnet-4-6', context_length: 200_000 }, { id: 'claude-opus-4-8', context_length: 200_000 }, { id: 'claude-haiku-4-5-20251001', context_length: 200_000 }, { id: 'claude-fable-5', context_length: 200_000 }],
-  groq:       [{ id: 'llama-3.3-70b-versatile', context_length: 128_000 }, { id: 'llama-3.1-8b-instant', context_length: 128_000 }, { id: 'deepseek-r1-distill-llama-70b', context_length: 128_000 }, { id: 'mixtral-8x7b-32768', context_length: 32_000 }],
-  mistral:    [{ id: 'mistral-large-latest', context_length: 128_000 }, { id: 'mistral-small-latest', context_length: 32_000 }, { id: 'codestral-latest', context_length: 256_000 }, { id: 'pixtral-large-latest', context_length: 128_000 }],
-  gemini:     [{ id: 'gemini-2.0-flash', context_length: 1_000_000 }, { id: 'gemini-2.5-pro-preview-05-06', context_length: 1_000_000 }, { id: 'gemini-2.5-flash', context_length: 1_000_000 }, { id: 'gemini-1.5-pro', context_length: 1_000_000 }],
-  zai:        [{ id: 'glm-5.2', context_length: 128_000 }, { id: 'glm-4.7-flash', context_length: 128_000 }, { id: 'glm-4.5-flash', context_length: 128_000 }],
+  sennoric: [{ id: 'fresco', context_length: 128_000 }, { id: 'glyph', context_length: 32_000 }],
 };
 
-// Fetch model lists from providers that support /v1/models (or equivalent).
-// Called at startup so the CLI automatically picks up new models without updates.
-const PROVIDER_MODEL_ENDPOINTS = [
-  { provider: 'openai',     baseURL: 'https://api.openai.com/v1/models',                    needsKey: 'openai' },
-  { provider: 'anthropic',  baseURL: 'https://api.anthropic.com/v1/models',                 needsKey: 'anthropic', format: 'anthropic' },
-  { provider: 'groq',       baseURL: 'https://api.groq.com/openai/v1/models',               needsKey: 'groq' },
-  { provider: 'mistral',    baseURL: 'https://api.mistral.ai/v1/models',                     needsKey: 'mistral' },
-  { provider: 'gemini',     baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/models', needsKey: 'gemini' },
-  { provider: 'openrouter', baseURL: 'https://openrouter.ai/api/v1/models',                  needsKey: null }, // works without key
-  { provider: 'zai',        baseURL: 'https://api.z.ai/api/paas/v4/models',                 needsKey: 'zai' },
-];
+// Sennoric models are served by the Worker at api.sennoric.com — no external
+// provider model discovery is needed, so this list is empty by design.
+const PROVIDER_MODEL_ENDPOINTS = [];
 
 export async function fetchProviderModels() {
   await Promise.allSettled(
@@ -255,23 +150,9 @@ export async function fetchProviderModels() {
   );
 }
 
-export async function fetchOpenRouterContextWindows() {
-  try {
-    const key = API_KEYS.openrouter;
-    const res = await fetch('https://openrouter.ai/api/v1/models', {
-      headers: key ? { Authorization: `Bearer ${key}` } : {},
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return;
-    const json = await res.json();
-    if (!json?.data) return;
-    for (const model of json.data) {
-      if (model.id && model.context_length) {
-        CONTEXT_WINDOWS[model.id] = model.context_length;
-      }
-    }
-  } catch {}
-}
+// OpenRouter discovery was removed when non-Sennoric providers were dropped;
+// kept as a no-op so callers don't need to change.
+export async function fetchOpenRouterContextWindows() {}
 
 // Try to fetch model metadata from OpenAI-compatible /v1/models endpoint.
 // Some providers (Ollama, etc.) return context info here.
@@ -299,7 +180,7 @@ export async function fetchEndpointContextWindows() {
   }
 }
 
-export const DEFAULT_MODEL = process.env.AXION_MODEL || 'big-pickle';
+export const DEFAULT_MODEL = process.env.AXION_MODEL || 'fresco';
 export const DEFAULT_MODE  = 'ask';
 
 // ── Multi-Agent System — named agents with configurable permissions ──────────
@@ -328,19 +209,11 @@ export function getProviderFallbackChain() {
   return [];
 }
 
-// Cost per 1M tokens (input, output) in USD — used for rough estimates only
+// Cost per 1M tokens (input, output) in USD — used for rough estimates only.
+// Fresco/Glyph are served by the Sennoric Worker; these are the public rates.
 export const TOKEN_COSTS = {
-  'claude-sonnet-4-6':            { in: 3,     out: 15   },
-  'claude-opus-4-8':              { in: 15,    out: 75   },
-  'claude-haiku-4-5-20251001':    { in: 0.8,   out: 4    },
-  'claude-fable-5':               { in: 10,    out: 50   },
-  'gpt-4o':                       { in: 5,     out: 15   },
-  'gpt-4o-mini':                  { in: 0.15,  out: 0.6  },
-  'gemini-2.0-flash':             { in: 0.075, out: 0.3  },
-  'gemini-2.5-pro-preview-05-06': { in: 1.25,  out: 10   },
-  'gemini-2.5-flash':               { in: 0.15, out: 0.6 },
-  'llama-3.3-70b-versatile':      { in: 0.59,  out: 0.79 },
-  'mistral-large-latest':         { in: 3,     out: 9    },
+  'fresco': { in: 0.15, out: 0.50 },
+  'glyph':  { in: 0.05, out: 0.15 },
 };
 
 // ── Per-model reasoning/thinking metadata and transport shim config ──────
@@ -359,39 +232,12 @@ export const TOKEN_COSTS = {
 // `maxTokensField` is 'max_tokens' or 'max_completion_tokens' (o-series use the latter).
 // `stripFields` lists body fields this model/provider cannot accept.
 export const REASONING_CONFIGS = {
-  'gpt-4o':                          { mode: 'levels', efforts: ['low', 'medium', 'high'], wireFormat: 'reasoning_effort', maxTokensField: 'max_tokens' },
-  'gpt-4o-mini':                     { mode: 'levels', efforts: ['low', 'medium', 'high'], wireFormat: 'reasoning_effort', maxTokensField: 'max_tokens' },
-  'gpt-4.1':                         { mode: 'levels', efforts: ['low', 'medium', 'high'], wireFormat: 'reasoning_effort', maxTokensField: 'max_completion_tokens' },
-  'o3':                              { mode: 'levels', efforts: ['low', 'medium', 'high'], wireFormat: 'reasoning_effort', maxTokensField: 'max_completion_tokens' },
-  'o4-mini':                         { mode: 'levels', efforts: ['low', 'medium', 'high'], wireFormat: 'reasoning_effort', maxTokensField: 'max_completion_tokens' },
-  'gpt-5.6-sol':                     { mode: 'levels', efforts: ['low', 'medium', 'high'], wireFormat: 'reasoning_effort', maxTokensField: 'max_completion_tokens' },
-  'gpt-5.6-terra':                   { mode: 'levels', efforts: ['low', 'medium', 'high'], wireFormat: 'reasoning_effort', maxTokensField: 'max_completion_tokens' },
-  'gpt-5.6-luna':                    { mode: 'levels', efforts: ['low', 'medium', 'high'], wireFormat: 'reasoning_effort', maxTokensField: 'max_completion_tokens' },
-  'gpt-5.6-sol-pro':                 { mode: 'levels', efforts: ['low', 'medium', 'high'], wireFormat: 'reasoning_effort', maxTokensField: 'max_completion_tokens' },
-  'gpt-5.6-terra-pro':               { mode: 'levels', efforts: ['low', 'medium', 'high'], wireFormat: 'reasoning_effort', maxTokensField: 'max_completion_tokens' },
-  'gpt-5.6-luna-pro':                { mode: 'levels', efforts: ['low', 'medium', 'high'], wireFormat: 'reasoning_effort', maxTokensField: 'max_completion_tokens' },
-  'claude-sonnet-4-6':               { mode: 'toggle', efforts: [], wireFormat: 'thinking_type', maxTokensField: 'max_tokens' },
-  'claude-opus-4-8':                 { mode: 'toggle', efforts: [], wireFormat: 'thinking_type', maxTokensField: 'max_tokens' },
-  'claude-haiku-4-5-20251001':       { mode: 'toggle', efforts: [], wireFormat: 'thinking_type', maxTokensField: 'max_tokens' },
-  'claude-fable-5':                  { mode: 'toggle', efforts: [], wireFormat: 'thinking_type', maxTokensField: 'max_tokens' },
-  'llama-3.3-70b-versatile':         { mode: 'none', efforts: [], wireFormat: 'none', maxTokensField: 'max_tokens', stripFields: ['reasoning_effort', 'store'] },
-  'llama-3.1-8b-instant':            { mode: 'none', efforts: [], wireFormat: 'none', maxTokensField: 'max_tokens', stripFields: ['reasoning_effort', 'store'] },
-  'mistral-large-latest':            { mode: 'none', efforts: [], wireFormat: 'none', maxTokensField: 'max_tokens', stripFields: ['store'] },
-  'mistral-small-latest':            { mode: 'none', efforts: [], wireFormat: 'none', maxTokensField: 'max_tokens', stripFields: ['store'] },
-  'gemini-2.0-flash':                { mode: 'none', efforts: [], wireFormat: 'none', maxTokensField: 'max_tokens' },
-  'gemini-2.5-pro-preview-05-06':    { mode: 'none', efforts: [], wireFormat: 'none', maxTokensField: 'max_tokens' },
-  'gemini-2.5-flash':                { mode: 'none', efforts: [], wireFormat: 'none', maxTokensField: 'max_tokens' },
-  'deepseek-r1-distill-llama-70b':   { mode: 'levels', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], wireFormat: 'deepseek_compatible', maxTokensField: 'max_tokens' },
-  'glm-5.2':                         { mode: 'levels', efforts: ['low', 'medium', 'high'], wireFormat: 'zai_compatible', maxTokensField: 'max_tokens' },
-  'glm-4.7-flash':                   { mode: 'levels', efforts: ['low', 'medium', 'high'], wireFormat: 'zai_compatible', maxTokensField: 'max_tokens' },
-  'glm-4.5-flash':                   { mode: 'levels', efforts: ['low', 'medium', 'high'], wireFormat: 'zai_compatible', maxTokensField: 'max_tokens' },
+  'fresco': { mode: 'none', efforts: [], wireFormat: 'none', maxTokensField: 'max_tokens' },
+  'glyph':  { mode: 'none', efforts: [], wireFormat: 'none', maxTokensField: 'max_tokens' },
 };
 
 // Provider-level body-field strip lists applied to all models under that provider.
-export const PROVIDER_STRIP_FIELDS = {
-  groq:    ['reasoning_effort', 'store'],
-  mistral: ['store'],
-};
+export const PROVIDER_STRIP_FIELDS = {};
 
 // ── File formatter configuration ──────────────────────────────────────────
 //

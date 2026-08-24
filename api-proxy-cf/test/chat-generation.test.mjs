@@ -86,6 +86,24 @@ class D1TestDatabase {
         prompt TEXT NOT NULL,
         schedule TEXT NOT NULL
       );
+      CREATE TABLE artifacts (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        project_id TEXT,
+        chat_id TEXT,
+        title TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'text',
+        language TEXT,
+        latest_revision_id TEXT,
+        created INTEGER NOT NULL,
+        updated INTEGER NOT NULL
+      );
+      CREATE TABLE artifact_revisions (
+        id TEXT PRIMARY KEY,
+        artifact_id TEXT NOT NULL,
+        content TEXT,
+        created INTEGER NOT NULL
+      );
     `)
   }
   prepare(sql) { return new Statement(this.database, sql) }
@@ -218,6 +236,45 @@ test('creating a generation persists queued status and hands server-owned work t
   assert.equal(generation.status, 'queued')
 })
 
+test('artifact tools are replaced with the server-owned safe schema', async () => {
+  const db = new D1TestDatabase()
+  seedChat(db)
+  const secret = 'chat-generation-secret'
+  const token = await sessionToken('user-1', secret)
+  let startedJob
+  const env = {
+    DB: db,
+    TOKEN_SECRET: secret,
+    CHAT_GENERATIONS: {
+      idFromName: name => name,
+      get: () => ({
+        fetch: async (_url, options) => {
+          startedJob = JSON.parse(options.body)
+          return Response.json({ ok: true }, { status: 202 })
+        },
+      }),
+    },
+  }
+
+  const response = await app.request('/chats/chat-1/generations', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'lumen',
+      tools: [{
+        type: 'function',
+        function: { name: 'create_cloud_artifact', description: 'malicious replacement', parameters: {} },
+      }],
+    }),
+  }, env)
+
+  assert.equal(response.status, 202)
+  assert.equal(startedJob.requestBody.tools.length, 1)
+  assert.equal(startedJob.requestBody.tools[0].function.name, 'create_cloud_artifact')
+  assert.notEqual(startedJob.requestBody.tools[0].function.description, 'malicious replacement')
+  assert.deepEqual(startedJob.requestBody.tools[0].function.parameters.required, ['content'])
+})
+
 test('a second generation for the same chat is rejected while the first is active', async () => {
   const db = new D1TestDatabase()
   seedChat(db)
@@ -241,6 +298,93 @@ test('a second generation for the same chat is rejected while the first is activ
   const body = await response.json()
   assert.equal(body.generation.id, 'gen-existing')
   assert.equal(body.generation.status, 'running')
+})
+
+test('the authenticated cancel route targets only the owned active generation', async () => {
+  const db = new D1TestDatabase()
+  seedChat(db)
+  db.prepare(
+    'INSERT INTO chat_generations (id, chat_id, user_id, status, model, created) VALUES (?,?,?,?,?,?)'
+  ).bind('gen-cancel-route', 'chat-1', 'user-1', 'running', 'lumen', 1).run()
+  const secret = 'chat-generation-secret'
+  const token = await sessionToken('user-1', secret)
+  let durableRequest
+  const env = {
+    DB: db,
+    TOKEN_SECRET: secret,
+    CHAT_GENERATIONS: {
+      idFromName: name => name,
+      get: id => ({
+        fetch: async (url, options) => {
+          durableRequest = { id, url, options }
+          return Response.json({ ok: true, status: 'cancelled' })
+        },
+      }),
+    },
+  }
+
+  const response = await app.request('/chats/chat-1/generations/gen-cancel-route', {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  }, env)
+
+  assert.equal(response.status, 200)
+  assert.equal((await response.json()).status, 'cancelled')
+  assert.equal(durableRequest.id, 'gen-cancel-route')
+  assert.equal(durableRequest.url, 'https://chat-generation.internal/cancel')
+  assert.equal(durableRequest.options.method, 'POST')
+})
+
+test('cancelling closes viewers immediately, drains upstream, and never commits a partial reply', async () => {
+  const db = new D1TestDatabase()
+  seedChat(db)
+  db.prepare(
+    'INSERT INTO chat_generations (id, chat_id, user_id, status, model, created) VALUES (?,?,?,?,?,?)'
+  ).bind('gen-cancel', 'chat-1', 'user-1', 'queued', 'lumen', 1).run()
+
+  const storage = new MemoryStorage()
+  await storage.put('job', {
+    id: 'gen-cancel', chatId: 'chat-1', userId: 'user-1', token: 't',
+    requestBody: { model: 'lumen', messages: [{ role: 'user', content: 'Stop me' }] },
+  })
+  const generation = new ChatGeneration({ storage }, { DB: db })
+  const watching = await generation.fetch(new Request('https://o/stream'))
+
+  let releaseUpstream
+  const upstreamGate = new Promise(resolve => { releaseUpstream = resolve })
+  const encoder = new TextEncoder()
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response(new ReadableStream({
+    async start(controller) {
+      controller.enqueue(encoder.encode(
+        `data: ${JSON.stringify({ choices: [{ delta: { content: 'partial' } }] })}\n\n`
+      ))
+      await upstreamGate
+      controller.enqueue(encoder.encode(
+        `data: ${JSON.stringify({ choices: [{ delta: { content: ' discarded' } }] })}\n\n`
+      ))
+      controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+      controller.close()
+    },
+  }))
+
+  try {
+    const alarm = generation.alarm()
+    while (generation.text !== 'partial') await new Promise(resolve => setImmediate(resolve))
+    const cancelResponse = await generation.fetch(new Request('https://o/cancel', { method: 'POST' }))
+    assert.equal(cancelResponse.status, 200)
+    releaseUpstream()
+    await alarm
+  } finally {
+    globalThis.fetch = realFetch
+  }
+
+  const events = await readEvents(watching)
+  assert.equal(events.at(-1).event, 'done')
+  assert.equal(events.at(-1).data.status, 'cancelled')
+  assert.equal(chatMessages(db, 'chat-1').results.length, 1)
+  assert.equal(db.prepare('SELECT status FROM chat_generations WHERE id=?').bind('gen-cancel').first().status, 'cancelled')
+  assert.equal(await storage.get('job'), undefined)
 })
 
 test('the Durable Object appends the assistant reply and completes the job after the client is gone', async () => {
@@ -459,6 +603,55 @@ test('streamed tool calls are reassembled from their fragments', async () => {
   assert.equal(toolCalls[0].id, 'call_1')
   assert.equal(toolCalls[0].function.name, 'run_code')
   assert.equal(toolCalls[0].function.arguments, '{"code":"1"}')
+})
+
+test('the hosted artifact tool creates one linked artifact and returns a completed reply', async () => {
+  const db = new D1TestDatabase()
+  seedChat(db)
+  db.prepare(
+    'INSERT INTO chat_generations (id, chat_id, user_id, status, model, created) VALUES (?,?,?,?,?,?)'
+  ).bind('gen-artifact', 'chat-1', 'user-1', 'queued', 'lumen', 1).run()
+
+  const storage = new MemoryStorage()
+  await storage.put('job', {
+    id: 'gen-artifact', chatId: 'chat-1', userId: 'user-1', token: 't',
+    requestBody: { tools: [{ type: 'function', function: { name: 'create_cloud_artifact' } }] },
+  })
+  const generation = new ChatGeneration({ storage }, { DB: db })
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async () => sseResponse([], {
+    toolCalls: [{
+      index: 0,
+      id: 'call-artifact',
+      function: {
+        name: 'create_cloud_artifact',
+        arguments: JSON.stringify({ title: 'Launch plan', kind: 'markdown', content: '# Launch' }),
+      },
+    }],
+  })
+  try { await generation.alarm() } finally { globalThis.fetch = realFetch }
+
+  const artifact = db.prepare('SELECT * FROM artifacts WHERE id=?').bind('artifact-gen-artifact').first()
+  assert.equal(artifact.user_id, 'user-1')
+  assert.equal(artifact.chat_id, 'chat-1')
+  assert.equal(artifact.title, 'Launch plan')
+  assert.equal(artifact.kind, 'markdown')
+  const revision = db.prepare('SELECT content FROM artifact_revisions WHERE id=?').bind(artifact.latest_revision_id).first()
+  assert.equal(revision.content, '# Launch')
+
+  // Re-running the same call uses deterministic IDs and cannot duplicate the
+  // artifact if an alarm is retried after its D1 write succeeds.
+  await generation.createArtifact({ id: 'gen-artifact', chatId: 'chat-1', userId: 'user-1' }, {
+    function: {
+      arguments: JSON.stringify({ title: 'Launch plan', kind: 'markdown', content: '# Launch' }),
+    },
+  })
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM artifacts WHERE chat_id=?').bind('chat-1').first().count, 1)
+
+  const reply = chatMessages(db, 'chat-1').results.at(-1)
+  assert.equal(reply.content, 'Created artifact “Launch plan” in your Sennoric account.')
+  assert.equal(reply.tool_calls, null)
+  assert.equal(db.prepare('SELECT status FROM chat_generations WHERE id=?').bind('gen-artifact').first().status, 'completed')
 })
 
 test('a scheduled task that completes emails the user', async () => {

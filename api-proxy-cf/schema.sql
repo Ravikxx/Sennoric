@@ -23,3 +23,20 @@ CREATE TABLE IF NOT EXISTS api_keys (
   tokens     INTEGER DEFAULT 0,
   revoked    INTEGER DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS client_errors (
+  id            TEXT PRIMARY KEY,
+  user_id       TEXT,
+  app_version   TEXT,
+  build_number  TEXT,
+  os_version    TEXT,
+  device_model  TEXT,
+  type          TEXT,
+  message       TEXT,
+  stack         TEXT,
+  context       TEXT,
+  created_at    INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_client_errors_created ON client_errors (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_client_errors_user ON client_errors (user_id, created_at DESC);
