@@ -128,10 +128,10 @@ test('a banned session-token account is rejected (requireAuth already filters ba
 test('a banned account using an API key (not pre-filtered by requireAuth) hits the route\'s own banned check and gets 403', async () => {
   const db = new D1TestDatabase()
   addUser(db, 'banned-keyholder', { banned: 1 })
-  db.prepare('INSERT INTO api_keys (id, user_id, key_value) VALUES (?,?,?)').bind('k1', 'banned-keyholder', 'axion-sk-banned').run()
+  db.prepare('INSERT INTO api_keys (id, user_id, key_value) VALUES (?,?,?)').bind('k1', 'banned-keyholder', 'sennoric-sk-banned').run()
   const response = await app.request('/v1/sandbox/execute', {
     method: 'POST',
-    headers: { Authorization: 'Bearer axion-sk-banned', 'Content-Type': 'application/json' },
+    headers: { Authorization: 'Bearer sennoric-sk-banned', 'Content-Type': 'application/json' },
     body: JSON.stringify({ code: 'print(1)' }),
   }, { DB: db })
   assert.equal(response.status, 403)
@@ -229,10 +229,10 @@ test('hitting the weekly cap returns 200 with cap_exceeded:true instead of a har
   assert.equal(fetchCalled, false)
 })
 
-test('a valid axion-sk- API key can also use the sandbox (not just session tokens)', async () => {
+test('a valid sennoric-sk- API key can also use the sandbox (not just session tokens)', async () => {
   const db = new D1TestDatabase()
   addUser(db, 'keyholder')
-  db.prepare('INSERT INTO api_keys (id, user_id, key_value) VALUES (?,?,?)').bind('k1', 'keyholder', 'axion-sk-test123').run()
+  db.prepare('INSERT INTO api_keys (id, user_id, key_value) VALUES (?,?,?)').bind('k1', 'keyholder', 'sennoric-sk-test123').run()
   const env = { DB: db, DAYTONA_API_KEY: 'dtn-test' }
 
   const realFetch = globalThis.fetch
@@ -240,7 +240,7 @@ test('a valid axion-sk- API key can also use the sandbox (not just session token
   try {
     const response = await app.request('/v1/sandbox/execute', {
       method: 'POST',
-      headers: { Authorization: 'Bearer axion-sk-test123', 'Content-Type': 'application/json' },
+      headers: { Authorization: 'Bearer sennoric-sk-test123', 'Content-Type': 'application/json' },
       body: JSON.stringify({ code: 'print(1)' }),
     }, env)
     assert.equal(response.status, 200)
