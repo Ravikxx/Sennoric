@@ -3591,13 +3591,29 @@ async function disabledModelIds(env) {
   return ids
 }
 
+// Per-model overrides for the kill-switch response body. Falls back to the
+// generic "temporarily disabled" message below when a model has no entry
+// here — only add one when the generic message isn't informative enough
+// (e.g. a known hosting-provider incident worth naming for the caller).
+const DISABLED_MODEL_MESSAGES = {
+  'fresco-1.3': {
+    message:
+      "Fresco 1.3 is temporarily unavailable due to a hosting issue with our inference provider. " +
+      "We're actively working on it — check sennoric.com/announcements for updates. (Error SENNORIC-FR13-HOST-001)",
+    type: 'model_unavailable',
+    code: 'SENNORIC-FR13-HOST-001',
+  },
+}
+
 async function proxyUpstream(body, env) {
   const requested = (body.model || '').toLowerCase()
 
   const disabled = await disabledModelIds(env)
   if (disabled.has(requested)) {
+    const errorBody = DISABLED_MODEL_MESSAGES[requested] ||
+      { message: `Model "${requested}" is temporarily disabled.`, type: 'model_disabled' }
     return new Response(
-      JSON.stringify({ error: { message: `Model "${requested}" is temporarily disabled.`, type: 'model_disabled' } }),
+      JSON.stringify({ error: errorBody }),
       { status: 503, headers: { 'Content-Type': 'application/json; charset=utf-8' } },
     )
   }
