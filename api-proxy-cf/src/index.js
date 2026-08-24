@@ -3271,7 +3271,16 @@ async function startChatGeneration(env, { chatId, userId, tokenVersion = 0, mode
     return { ok: false, reason: 'bad_last_role' }
   }
 
-  const resolvedModel = typeof model === 'string' && model ? model.slice(0, 100) : 'fresco'
+  // Resolve a '-latest' alias to its concrete model id *before* it's stored
+  // as job.requestBody.model — chatGeneration.js's guardrail moderation gate
+  // (MODERATED_MODELS) checks that exact stored string, and only recognizes
+  // literal concrete ids like 'fresco-1.3'. If an alias reached the Durable
+  // Object unresolved, a request for 'fresco-latest' that happened to
+  // resolve to fresco-1.3 would silently skip the safety-eval guardrail —
+  // resolving here, once, keeps that check correct without chatGeneration.js
+  // needing to know aliases exist at all.
+  const rawModel = (typeof model === 'string' && model ? model.slice(0, 100) : 'fresco').toLowerCase()
+  const resolvedModel = resolveLatestAlias(rawModel, await disabledModelIds(env))
   const resolvedTools = webChatTools(tools)
   const resolvedInstructions = typeof instructions === 'string' ? instructions.trim().slice(0, 8_000) : ''
   const requestBody = {
@@ -3605,10 +3614,47 @@ const DISABLED_MODEL_MESSAGES = {
   },
 }
 
+// Ordered newest-first per model family. "-latest" aliases (resolved below)
+// walk this list and stop at the first entry that isn't kill-switched via
+// disabled_models, so a broken/unstable release is never silently served to
+// a "-latest" caller — it falls through to the next-newest instead. This is
+// maintained by hand, not derived from parsing version strings, because
+// each id routes through its own dedicated proxy function with its own
+// served-model-name/system prompt (see proxyUpstream below): add the new id
+// here only once it actually has its own routing branch.
+const FRESCO_VERSIONS_NEWEST_FIRST = ['fresco-1.3', 'fresco']
+const GLYPH_VERSIONS_NEWEST_FIRST = ['glyph']
+
+// Resolves 'fresco-latest' / 'glyph-latest' to the newest concrete version
+// in that family that isn't currently disabled. Returns the requested id
+// unchanged if it isn't one of the aliases. If every version in the family
+// is disabled, falls back to the oldest one — so the caller still gets that
+// specific model's kill-switch message (via DISABLED_MODEL_MESSAGES) rather
+// than an opaque "unknown model" error further down.
+export function resolveLatestAlias(requested, disabled) {
+  const chain =
+    requested === 'fresco-latest' ? FRESCO_VERSIONS_NEWEST_FIRST :
+    requested === 'glyph-latest' ? GLYPH_VERSIONS_NEWEST_FIRST :
+    null
+  if (!chain) return requested
+  return chain.find((id) => !disabled.has(id)) || chain[chain.length - 1]
+}
+
 async function proxyUpstream(body, env) {
-  const requested = (body.model || '').toLowerCase()
+  let requested = (body.model || '').toLowerCase()
 
   const disabled = await disabledModelIds(env)
+
+  // Mutate body.model in place (not just the local `requested`) so every
+  // downstream consumer — audit logging, usage records, the response's
+  // echoed model field — reflects the concrete version that actually
+  // served the request rather than the ambiguous alias.
+  const resolved = resolveLatestAlias(requested, disabled)
+  if (resolved !== requested) {
+    requested = resolved
+    body.model = resolved
+  }
+
   if (disabled.has(requested)) {
     const errorBody = DISABLED_MODEL_MESSAGES[requested] ||
       { message: `Model "${requested}" is temporarily disabled.`, type: 'model_disabled' }
@@ -4003,6 +4049,13 @@ app.get('/v1/models', async (c) => {
     { id: 'fresco-1.3', object: 'model', created: 1787000000, owned_by: 'sennoric' },
     { id: 'fresco', object: 'model', created: 1750000000, owned_by: 'sennoric' },
     { id: 'glyph', object: 'model', created: 1785536086, owned_by: 'sennoric' },
+    // Aliases, not their own deployment — proxyUpstream resolves these to
+    // whichever concrete version in FRESCO/GLYPH_VERSIONS_NEWEST_FIRST isn't
+    // currently disabled. Listed unconditionally (not filtered by the
+    // disabled set below) since the alias itself is never what's disabled,
+    // only a specific version underneath it.
+    { id: 'fresco-latest', object: 'model', created: 1787000000, owned_by: 'sennoric' },
+    { id: 'glyph-latest', object: 'model', created: 1785536086, owned_by: 'sennoric' },
   ]
   return json({ object: 'list', data: all.filter((m) => !disabled.has(m.id)) })
 })
