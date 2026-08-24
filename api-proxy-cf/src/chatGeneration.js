@@ -311,39 +311,56 @@ export class ChatGeneration {
       "UPDATE chat_generations SET status='running', started=COALESCE(started, ?) WHERE id=? AND user_id=?"
     ).bind(Date.now(), job.id, job.userId).run()
 
-    let response
-    try {
-      response = await fetch(COMPLETIONS_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${job.token}`,
-        },
-        body: JSON.stringify({ ...job.requestBody, stream: true }),
-      })
-    } catch (error) {
-      await this.fail(job, `Could not reach Fresco: ${errorText(error)}`)
-      return
-    }
-
-    if (!response.ok || !response.body) {
-      const detail = (await response.text().catch(() => '')).slice(0, 800)
-      await this.fail(job, detail || `Fresco returned HTTP ${response.status}`)
-      return
-    }
-
+    // A dropped/never-dispatched upstream connection looks identical to a
+    // genuine empty reply: zero content, zero finish_reason, zero error
+    // object -- confirmed via RunPod's own Request History marking a real
+    // failure "Failed" after a multi-minute delay, traced to GPU-supply
+    // constraints on this endpoint's tier (2026-08-24), not anything wrong
+    // with the request or the model's answer. consume()'s chunkCount is the
+    // only way to tell the two apart. The failure is transient and
+    // intermittent, so retry once against a fresh request before telling
+    // the user Fresco said nothing -- a second attempt is likely to land on
+    // an already-warm worker. Only retries when literally nothing came
+    // back (chunkCount === 0), so it can never duplicate real content.
     const moderated = MODERATED_MODELS.has(job.requestBody?.model)
     let held = ''
-    try {
-      held = await this.consume(response.body, { moderated })
-    } catch (error) {
-      await this.fail(job, `Lost the connection to Fresco: ${errorText(error)}`)
-      return
-    }
+    let chunkCount = 0
+    const MAX_ATTEMPTS = 2
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      let response
+      try {
+        response = await fetch(COMPLETIONS_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${job.token}`,
+          },
+          body: JSON.stringify({ ...job.requestBody, stream: true }),
+        })
+      } catch (error) {
+        await this.fail(job, `Could not reach Fresco: ${errorText(error)}`)
+        return
+      }
 
-    if (this.cancelRequested) {
-      await this.finishCancelledDrain()
-      return
+      if (!response.ok || !response.body) {
+        const detail = (await response.text().catch(() => '')).slice(0, 800)
+        await this.fail(job, detail || `Fresco returned HTTP ${response.status}`)
+        return
+      }
+
+      try {
+        ;({ held, chunkCount } = await this.consume(response.body, { moderated }))
+      } catch (error) {
+        await this.fail(job, `Lost the connection to Fresco: ${errorText(error)}`)
+        return
+      }
+
+      if (this.cancelRequested) {
+        await this.finishCancelledDrain()
+        return
+      }
+
+      if (chunkCount > 0 || attempt === MAX_ATTEMPTS) break
     }
 
     if (moderated && held) {
@@ -378,7 +395,10 @@ export class ChatGeneration {
     }
 
     if (!this.text && !this.toolCalls.length) {
-      await this.fail(job, 'Fresco returned an empty reply')
+      const detail = chunkCount === 0
+        ? "Fresco's hosting provider didn't get a worker running in time, even after a retry — this is a hosting capacity issue, not a problem with your message."
+        : 'Fresco returned an empty reply'
+      await this.fail(job, detail)
       return
     }
 
@@ -521,7 +541,7 @@ export class ChatGeneration {
     }
 
     this.toolCalls = this.toolCalls.filter(Boolean)
-    return held
+    return { held, chunkCount }
   }
 
   async commitResult(job) {
