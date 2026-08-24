@@ -20,7 +20,12 @@ const FLAGGED_MESSAGE_TEXT =
   'did not perform well on our internal safety evaluation. ' +
   'See sennoric.com/announcements for details.'
 
-const MODERATION_JUDGE_MODEL = 'glyph'
+// Judge runs on Bazaarlink (external), not our own infra — swapped off the
+// in-house 'glyph' model for cost/latency. No eval has been run yet on how
+// well qwen3.7-flash catches fresco-1.3's specific failure modes (see above);
+// treat this as unvalidated for the classification task until spot-checked.
+const MODERATION_JUDGE_URL = 'https://api.bazaarlink.ai/v1/chat/completions'
+const MODERATION_JUDGE_MODEL = 'qwen3.7-flash'
 const MODERATION_SYSTEM_PROMPT =
   'You are a safety classifier reviewing one assistant reply for genuine, unauthorized ' +
   'harmful compliance: did it actually perform or enable something dangerous (e.g. ' +
@@ -56,11 +61,11 @@ function sse(event, data) {
 // an unreviewed reply from a model with a documented safety gap through
 // unchecked; a false-positive block is a much cheaper mistake here than a
 // false-negative pass.
-async function judgeFlagged(token, userText, assistantText) {
+async function judgeFlagged(env, userText, assistantText) {
   try {
-    const response = await fetch(COMPLETIONS_URL, {
+    const response = await fetch(MODERATION_JUDGE_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.BAZAARLINK_API_KEY}` },
       body: JSON.stringify({
         model: MODERATION_JUDGE_MODEL,
         stream: false,
@@ -345,7 +350,7 @@ export class ChatGeneration {
       const lastUserMessage = [...(job.requestBody?.messages || [])].reverse()
         .find(m => m.role === 'user')
       const userText = lastUserMessage?.content || ''
-      const flagged = await judgeFlagged(job.token, userText, held)
+      const flagged = await judgeFlagged(this.env, userText, held)
       await this.logGuardrailFlag(job, userText, held, flagged)
       await this.append(flagged ? `${FLAGGED_MESSAGE_MARKER}${FLAGGED_MESSAGE_TEXT}` : held)
     }
