@@ -18,6 +18,7 @@ import {
   WINDOW_MS,
 } from './billing.js'
 import { probeFrescoHealth, proxyFrescoRequest } from './fresco-upstream.js'
+import { probeFresco13Health, proxyFresco13Request } from './fresco13-upstream.js'
 import { probeGlyphHealth, proxyGlyphRequest } from './glyph-upstream.js'
 import { runCode } from './sandbox.js'
 import { runStatusChecks, getStatusSnapshot } from './status.js'
@@ -157,7 +158,7 @@ async function verifyPasswordModern(password, stored) {
 // Legacy verify only — never used to mint new hashes.
 async function hashPw(password, salt) {
   const enc = new TextEncoder()
-  const data = enc.encode(password + (salt || 'axion'))
+  const data = enc.encode(password + (salt || 'sennoric'))
   const buf = await crypto.subtle.digest('SHA-256', data)
   return bytesToHex(new Uint8Array(buf))
 }
@@ -190,12 +191,12 @@ async function verifyPassword(password, storedHash, salt) {
 function genKey() {
   const bytes = new Uint8Array(20)
   crypto.getRandomValues(bytes)
-  return 'axion-sk-' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
+  return 'sennoric-sk-' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
 const TOKEN_TTL = 7 * 24 * 60 * 60 * 1000 // 7 days
 const SESSION_COOKIE_TTL = 30 * 24 * 60 * 60 * 1000 // 30 days
-const SESSION_COOKIE = 'axion_session'
+const SESSION_COOKIE = 'sennoric_session'
 const DOMAIN_MIGRATION_TTL = 60 * 1000
 const NEW_API_ORIGIN = 'https://api.sennoric.com'
 
@@ -316,7 +317,7 @@ function validEmail(email) {
 async function requireKey(c) {
   const auth = c.req.header('Authorization') || ''
   const key = auth.replace(/^Bearer\s+/i, '').trim()
-  if (!key.startsWith('axion-sk-')) return null
+  if (!key.startsWith('sennoric-sk-')) return null
   return c.env.DB.prepare('SELECT * FROM api_keys WHERE key_value=? AND revoked=0').bind(key).first()
 }
 
@@ -601,10 +602,10 @@ app.get('/auth/verify', async (c) => {
 //      BASE64URL(SHA-256(verifier)) to the browser as `code_challenge`.
 //   2. User approves in the browser; POST /auth/desktop/approve issues a
 //      single-use code bound to that challenge.
-//   3. Browser hands the code back to the app via the axion:// handler.
+//   3. Browser hands the code back to the app via the sennoric:// handler.
 //   4. App redeems it at POST /auth/desktop/token with the raw verifier.
 //
-// A hostile app registered for axion:// can intercept step 3, but cannot
+// A hostile app registered for sennoric:// can intercept step 3, but cannot
 // complete step 4: it never saw the verifier, and the code is bound to the
 // challenge. See RFC 8252 §8.1 for why this matters on desktop specifically.
 
@@ -1148,8 +1149,8 @@ app.get('/auth/github/callback', async (c) => {
   if (desktopIntegration) return desktopIntegration
 
   const [profileRes, emailsRes] = await Promise.all([
-    fetch('https://api.github.com/user', { headers: { Authorization: `Bearer ${access_token}`, 'User-Agent': 'axion-api' } }),
-    fetch('https://api.github.com/user/emails', { headers: { Authorization: `Bearer ${access_token}`, 'User-Agent': 'axion-api' } }),
+    fetch('https://api.github.com/user', { headers: { Authorization: `Bearer ${access_token}`, 'User-Agent': 'sennoric-api' } }),
+    fetch('https://api.github.com/user/emails', { headers: { Authorization: `Bearer ${access_token}`, 'User-Agent': 'sennoric-api' } }),
   ])
   const profile = await profileRes.json()
   const emails = await emailsRes.json()
@@ -1497,7 +1498,7 @@ const getAccountProfile = async (c) => {
   const user = await requireAuth(c)
   if (!user) return json({ error: 'Not authenticated' }, 401)
   const usage = await readAccountUsage(c.env.DB, user.id)
-  const { weeklyBudget, windowBudget } = limitsForPlan(user.plan)
+  const { weeklyBudget, windowBudget } = await boostedLimitsForPlan(user.plan, c.env)
   return json({
     connected: {
       google: !!user.google_id,
@@ -3482,6 +3483,49 @@ function limitsForPlan(plan) {
     : { weeklyBudget: FREE_WEEKLY_BUDGET, windowBudget: FREE_WINDOW_BUDGET }
 }
 
+// Module-level cache for the admin-controlled temporary usage boost — an
+// isolate can serve many requests per second, and this is read on every
+// billed request, so it can't be a DB hit per request. Re-fetched at most
+// once every 30s per isolate; a stale cache means a boost activated or
+// cleared by an admin takes up to 30s to take effect worker-wide, which is
+// an acceptable tradeoff for not hitting D1 on every chat completion.
+let _usageBoostCache = { multiplier: 1, fetchedAt: 0 }
+const USAGE_BOOST_CACHE_MS = 30_000
+
+async function activeBoostMultiplier(env) {
+  const now = Date.now()
+  if (now - _usageBoostCache.fetchedAt < USAGE_BOOST_CACHE_MS) {
+    return _usageBoostCache.multiplier
+  }
+  let multiplier = 1
+  try {
+    const row = await env.DB.prepare('SELECT percent, expires_at FROM usage_boost WHERE id=1').first()
+    const nowSeconds = Math.floor(now / 1000)
+    if (row && row.percent > 0 && row.expires_at && row.expires_at > nowSeconds) {
+      multiplier = 1 + row.percent / 100
+    }
+  } catch {
+    // Table missing (pre-migration) or DB unreachable — fall back to no
+    // boost rather than fail the request the caller actually cares about.
+    multiplier = 1
+  }
+  _usageBoostCache = { multiplier, fetchedAt: now }
+  return multiplier
+}
+
+// Same shape as limitsForPlan, but async and boost-aware — every real call
+// site (as opposed to display-only estimates) should use this, not the
+// plain sync version, or a live boost silently won't apply to enforcement.
+async function boostedLimitsForPlan(plan, env) {
+  const base = limitsForPlan(plan)
+  const multiplier = await activeBoostMultiplier(env)
+  if (multiplier === 1) return base
+  return {
+    weeklyBudget: Math.round(base.weeklyBudget * multiplier),
+    windowBudget: Math.round(base.windowBudget * multiplier),
+  }
+}
+
 // Sandbox tool-call config, gated by plan the same way limitsForPlan is —
 // placed alongside it for discoverability, but only ever called from the
 // /v1/sandbox/execute route, not the chat completions path.
@@ -3512,8 +3556,50 @@ function requestCostMicrodollars(inputTokens, outputTokens) {
 function estimateTokensFromChars(text) {
   return Math.ceil((text || '').length / 4)
 }
+// Module-level cache for the admin kill switch, same pattern and same
+// reasoning as _usageBoostCache above — read on every request, so it can't
+// be a DB hit per request. A disabled/re-enabled model takes up to 30s to
+// take effect worker-wide.
+let _disabledModelsCache = { ids: new Set(), fetchedAt: 0 }
+const DISABLED_MODELS_CACHE_MS = 30_000
+
+async function disabledModelIds(env) {
+  const now = Date.now()
+  if (now - _disabledModelsCache.fetchedAt < DISABLED_MODELS_CACHE_MS) {
+    return _disabledModelsCache.ids
+  }
+  let ids = new Set()
+  try {
+    const { results } = await env.DB.prepare('SELECT model_id FROM disabled_models').all()
+    ids = new Set(results.map((r) => r.model_id))
+  } catch {
+    // Table missing (pre-migration) or DB unreachable — fail open (treat as
+    // nothing disabled) rather than take every model down if this one
+    // query has a problem; the kill switch is a convenience, not something
+    // that should itself become an outage vector.
+    ids = new Set()
+  }
+  _disabledModelsCache = { ids, fetchedAt: now }
+  return ids
+}
+
 async function proxyUpstream(body, env) {
-  if ((body.model || '').toLowerCase() === 'glyph') return proxyGlyphRequest(body, env)
+  const requested = (body.model || '').toLowerCase()
+
+  const disabled = await disabledModelIds(env)
+  if (disabled.has(requested)) {
+    return new Response(
+      JSON.stringify({ error: { message: `Model "${requested}" is temporarily disabled.`, type: 'model_disabled' } }),
+      { status: 503, headers: { 'Content-Type': 'application/json; charset=utf-8' } },
+    )
+  }
+
+  if (requested === 'glyph') return proxyGlyphRequest(body, env)
+  // Explicit match required — 'fresco-1.3' must NOT fall into the default
+  // Fresco 1.2.5 branch below (that branch is a catch-all for any
+  // unrecognized model string, which would otherwise silently serve 1.3
+  // requests off 1.2.5's endpoint with no error).
+  if (requested === 'fresco-1.3') return proxyFresco13Request(body, env)
   return proxyFrescoRequest(body, env)
 }
 
@@ -3601,7 +3687,7 @@ app.post('/v1/sandbox/execute', async (c) => {
   const auth = (c.req.header('Authorization') || '').replace(/^Bearer\s+/i, '').trim()
 
   let billedUser = null
-  if (auth.startsWith('axion-sk-')) {
+  if (auth.startsWith('sennoric-sk-')) {
     const keyRow = await c.env.DB.prepare('SELECT * FROM api_keys WHERE key_value=? AND revoked=0').bind(auth).first()
     if (!keyRow) return json({ error: { message: 'Invalid or revoked API key', type: 'invalid_request_error' } }, 401)
     billedUser = await c.env.DB.prepare('SELECT * FROM users WHERE id=?').bind(keyRow.user_id).first()
@@ -3707,11 +3793,11 @@ app.post('/v1/chat/completions', async (c) => {
 
   // ── Account-billed request (API key or signed-in session) ──
   // Website chat/playground traffic authenticates with a signed session
-  // token rather than an axion-sk- key; it must hit the same account
+  // token rather than an sennoric-sk- key; it must hit the same account
   // budgets and charging as keyed traffic.
   let keyRow = null
   let billedUser = null
-  if (auth.startsWith('axion-sk-')) {
+  if (auth.startsWith('sennoric-sk-')) {
     keyRow = await c.env.DB.prepare('SELECT * FROM api_keys WHERE key_value=? AND revoked=0').bind(auth).first()
     if (!keyRow) return json({ error: { message: 'Invalid or revoked API key', type: 'invalid_request_error' } }, 401)
 
@@ -3732,7 +3818,7 @@ app.post('/v1/chat/completions', async (c) => {
   const auditRequestMessages = JSON.stringify(body.messages)
 
   if (billedUser) {
-    const { weeklyBudget: planWeeklyBudget, windowBudget: planWindowBudget } = limitsForPlan(billedUser.plan)
+    const { weeklyBudget: planWeeklyBudget, windowBudget: planWindowBudget } = await boostedLimitsForPlan(billedUser.plan, c.env)
 
     // Scope check — if key has scopes, requested model must be in the list
     if (keyRow?.scopes) {
@@ -3888,13 +3974,13 @@ app.post('/v1/chat/completions', async (c) => {
 })
 
 app.get('/v1/models', async (c) => {
-  return json({
-    object: 'list',
-    data: [
-      { id: 'fresco', object: 'model', created: 1750000000, owned_by: 'sennoric' },
-      { id: 'glyph', object: 'model', created: 1785536086, owned_by: 'sennoric' },
-    ],
-  })
+  const disabled = await disabledModelIds(c.env)
+  const all = [
+    { id: 'fresco-1.3', object: 'model', created: 1787000000, owned_by: 'sennoric' },
+    { id: 'fresco', object: 'model', created: 1750000000, owned_by: 'sennoric' },
+    { id: 'glyph', object: 'model', created: 1785536086, owned_by: 'sennoric' },
+  ]
+  return json({ object: 'list', data: all.filter((m) => !disabled.has(m.id)) })
 })
 
 // `ok` means the API itself is up; `model_up` means the model behind it
@@ -4102,8 +4188,14 @@ app.get('/admin/users', async (c) => {
      ORDER BY CASE WHEN u.id=? THEN 0 ELSE 1 END, u.created_at DESC LIMIT 100`
   ).bind(user.id).all()
 
+  // Fetched once for the whole list rather than per row — the cache inside
+  // activeBoostMultiplier makes repeat calls cheap anyway, but there's no
+  // reason to even do that when every row in this list shares one value.
+  const boostMultiplier = await activeBoostMultiplier(c.env)
   const users = results.map((row) => {
-    const { weeklyBudget, windowBudget } = limitsForPlan(row.plan)
+    const base = limitsForPlan(row.plan)
+    const weeklyBudget = boostMultiplier === 1 ? base.weeklyBudget : Math.round(base.weeklyBudget * boostMultiplier)
+    const windowBudget = boostMultiplier === 1 ? base.windowBudget : Math.round(base.windowBudget * boostMultiplier)
     const week = periodStatus(row.usage_week, row.included_week_cost, WEEK_MS)
     const win = periodStatus(row.usage_window, row.included_window_cost, WINDOW_MS)
     return {
@@ -4176,7 +4268,7 @@ app.put('/admin/users/:id/account-testing', async (c) => {
       previous.credit_balance || 0, credit_balance, changedAt),
   ])
 
-  const { weeklyBudget, windowBudget } = limitsForPlan(plan)
+  const { weeklyBudget, windowBudget } = await boostedLimitsForPlan(plan, c.env)
   return json({
     ok: true,
     user: {
@@ -4195,6 +4287,158 @@ app.put('/admin/users/:id/account-testing', async (c) => {
       }, weeklyBudget, windowBudget),
     },
   })
+})
+
+// Max multiplier of 500% (6x base) — a sanity ceiling against a typo like
+// pasting 5000 instead of 50, not a considered product limit. Raise it
+// deliberately if a real promo ever needs more.
+const MAX_USAGE_BOOST_PERCENT = 500
+
+app.get('/admin/usage-boost', async (c) => {
+  const user = await requireAdmin(c)
+  if (!user) return json({ error: 'Forbidden' }, 403)
+  const row = await c.env.DB.prepare('SELECT percent, expires_at, set_by, set_at FROM usage_boost WHERE id=1').first()
+  const nowSeconds = Math.floor(Date.now() / 1000)
+  const active = Boolean(row && row.percent > 0 && row.expires_at && row.expires_at > nowSeconds)
+  return json({ ...row, active })
+})
+
+app.post('/admin/usage-boost', async (c) => {
+  const admin = await requireAdmin(c)
+  if (!admin) return json({ error: 'Forbidden' }, 403)
+
+  const body = await c.req.json().catch(() => ({}))
+  const { percent, expires_at } = body
+  // percent=0 (any expires_at, including none) is the explicit "turn the
+  // boost off" case — validated separately so clearing it doesn't also
+  // have to satisfy the future-timestamp check below.
+  if (percent === 0) {
+    await c.env.DB.prepare(
+      'UPDATE usage_boost SET percent=0, expires_at=NULL, set_by=?, set_at=? WHERE id=1'
+    ).bind(admin.email, Math.floor(Date.now() / 1000)).run()
+    return json({ ok: true, percent: 0, expires_at: null, active: false })
+  }
+
+  if (!Number.isInteger(percent) || percent < 1 || percent > MAX_USAGE_BOOST_PERCENT) {
+    return json({ error: `percent must be a whole number from 1 to ${MAX_USAGE_BOOST_PERCENT} (or exactly 0 to clear)` }, 400)
+  }
+  const nowSeconds = Math.floor(Date.now() / 1000)
+  if (!Number.isInteger(expires_at) || expires_at <= nowSeconds) {
+    return json({ error: 'expires_at must be a whole-second Unix timestamp in the future' }, 400)
+  }
+
+  await c.env.DB.prepare(
+    'UPDATE usage_boost SET percent=?, expires_at=?, set_by=?, set_at=? WHERE id=1'
+  ).bind(percent, expires_at, admin.email, nowSeconds).run()
+
+  return json({ ok: true, percent, expires_at, active: true })
+})
+
+// Resets every account's current week/window usage to zero — the same
+// state a real, never-touched period looks like under the lazy-start model
+// (see migration 011). This is deliberately a blunt, all-accounts action;
+// there's no per-user targeting here on purpose, since the per-account
+// editor already covers that case (PUT /admin/users/:id/account-testing).
+app.post('/admin/usage/reset-all', async (c) => {
+  const admin = await requireAdmin(c)
+  if (!admin) return json({ error: 'Forbidden' }, 403)
+
+  const body = await c.req.json().catch(() => ({}))
+  // Defense in depth beyond the client's own confirm() dialog — this
+  // affects every account with no undo, so the request itself must say it
+  // means it, not just have come from an authenticated admin session.
+  if (body.confirm !== true) {
+    return json({ error: 'Resetting usage for every account requires { "confirm": true } in the request body.' }, 400)
+  }
+
+  const { meta } = await c.env.DB.prepare(
+    `UPDATE users SET included_week_cost=0, usage_week='', included_window_cost=0, usage_window='', usage_limit_notified=NULL`
+  ).run()
+  const affected = meta?.changes ?? 0
+
+  await c.env.DB.prepare(
+    'INSERT INTO admin_bulk_usage_resets (id, admin_email, affected_users, created_at) VALUES (?,?,?,?)'
+  ).bind(crypto.randomUUID(), admin.email, affected, Math.floor(Date.now() / 1000)).run()
+
+  return json({ ok: true, affected_users: affected })
+})
+
+app.get('/admin/model-health', async (c) => {
+  const user = await requireAdmin(c)
+  if (!user) return json({ error: 'Forbidden' }, 403)
+
+  const [fresco, glyph, fresco13] = await Promise.all([
+    probeFrescoHealth(c.env),
+    probeGlyphHealth(c.env),
+    probeFresco13Health(c.env),
+  ])
+  const disabled = await disabledModelIds(c.env)
+  return json({
+    models: [
+      { id: 'fresco', label: 'Fresco 1.2.5', up: fresco, disabled: disabled.has('fresco') },
+      { id: 'glyph', label: 'Glyph 1.1', up: glyph, disabled: disabled.has('glyph') },
+      { id: 'fresco-1.3', label: 'Fresco 1.3', up: fresco13, disabled: disabled.has('fresco-1.3') },
+    ],
+  })
+})
+
+app.post('/admin/model-flags/:id', async (c) => {
+  const admin = await requireAdmin(c)
+  if (!admin) return json({ error: 'Forbidden' }, 403)
+  const modelId = c.req.param('id')
+  const body = await c.req.json().catch(() => ({}))
+  const reason = typeof body.reason === 'string' ? body.reason.slice(0, 500) : null
+
+  await c.env.DB.prepare(
+    'INSERT INTO disabled_models (model_id, disabled_by, disabled_at, reason) VALUES (?,?,?,?) ' +
+    'ON CONFLICT(model_id) DO UPDATE SET disabled_by=excluded.disabled_by, disabled_at=excluded.disabled_at, reason=excluded.reason'
+  ).bind(modelId, admin.email, Math.floor(Date.now() / 1000), reason).run()
+
+  return json({ ok: true, model_id: modelId, disabled: true })
+})
+
+app.delete('/admin/model-flags/:id', async (c) => {
+  const admin = await requireAdmin(c)
+  if (!admin) return json({ error: 'Forbidden' }, 403)
+  const modelId = c.req.param('id')
+  await c.env.DB.prepare('DELETE FROM disabled_models WHERE model_id=?').bind(modelId).run()
+  return json({ ok: true, model_id: modelId, disabled: false })
+})
+
+const GUARDRAIL_FLAGS_LIMIT = 200
+
+app.get('/admin/guardrail-flags', async (c) => {
+  const user = await requireAdmin(c)
+  if (!user) return json({ error: 'Forbidden' }, 403)
+
+  const onlyFlagged = c.req.query('flagged_only') === '1'
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, generation_id, user_id, model, flagged, user_text, assistant_text, created_at
+     FROM guardrail_flags
+     ${onlyFlagged ? 'WHERE flagged=1' : ''}
+     ORDER BY created_at DESC LIMIT ?`
+  ).bind(GUARDRAIL_FLAGS_LIMIT).all()
+
+  const total = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM guardrail_flags').first()
+  const flaggedCount = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM guardrail_flags WHERE flagged=1').first()
+
+  return json({
+    rows: results,
+    total: total?.n ?? 0,
+    flagged: flaggedCount?.n ?? 0,
+  })
+})
+
+app.get('/admin/announcement-history', async (c) => {
+  const user = await requireAdmin(c)
+  if (!user) return json({ error: 'Forbidden' }, 403)
+
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, title, sent_at, recipient_count, send_status, send_error
+     FROM announcements ORDER BY sent_at DESC LIMIT 100`
+  ).all()
+
+  return json({ rows: results })
 })
 
 app.get('/admin/allowlist', async (c) => {
@@ -4453,7 +4697,8 @@ app.post('/webhook/announce', async (c) => {
 
   const id = content_hash || crypto.randomUUID()
   const now = Math.floor(Date.now() / 1000)
-  await c.env.DB.prepare('INSERT OR IGNORE INTO announcements (id, title, body, link, sent_at, created_at) VALUES (?,?,?,?,?,?)').bind(id, title.trim(), body.trim(), link || null, now, now).run()
+  const initialStatus = c.env.RESEND_API_KEY ? 'sending' : 'skipped_no_resend_key'
+  await c.env.DB.prepare('INSERT OR IGNORE INTO announcements (id, title, body, link, sent_at, created_at, send_status) VALUES (?,?,?,?,?,?,?)').bind(id, title.trim(), body.trim(), link || null, now, now, initialStatus).run()
 
   if (c.env.RESEND_API_KEY) {
     c.executionCtx.waitUntil((async () => {
@@ -4494,8 +4739,12 @@ app.post('/webhook/announce', async (c) => {
             })
           }))
         }
+        await c.env.DB.prepare('UPDATE announcements SET recipient_count=?, send_status=? WHERE id=?')
+          .bind(all.length, 'sent', id).run()
       } catch (err) {
         console.error(`[announce] background send failed: ${err?.stack || err}`)
+        await c.env.DB.prepare('UPDATE announcements SET send_status=?, send_error=? WHERE id=?')
+          .bind('failed', String(err?.message || err).slice(0, 500), id).run()
       }
     })())
   } else {
@@ -5146,13 +5395,13 @@ app.post('/orgs/:id/keys', async (c) => {
 // through this worker instead of requiring the phone to be on the same LAN.
 // One Durable Object instance per user id holds the live CLI socket and
 // relays terminal I/O to any attached app sockets. Auth accepts either an
-// axion-sk- API key (what the CLI already stores) or a session token (what
+// sennoric-sk- API key (what the CLI already stores) or a session token (what
 // the app stores after device-flow login) — same account, either credential.
 
 async function resolveBridgeUser(c) {
   const auth = (c.req.header('Authorization') || '').replace(/^Bearer\s+/i, '').trim()
   if (!auth) return null
-  if (auth.startsWith('axion-sk-')) {
+  if (auth.startsWith('sennoric-sk-')) {
     const keyRow = await c.env.DB.prepare('SELECT user_id FROM api_keys WHERE key_value=? AND revoked=0').bind(auth).first()
     return keyRow ? keyRow.user_id : null
   }

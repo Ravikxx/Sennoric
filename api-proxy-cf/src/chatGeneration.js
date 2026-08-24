@@ -4,6 +4,32 @@ const COMPLETIONS_URL = 'https://api.sennoric.com/v1/chat/completions'
 const ARTIFACT_CONTENT_LIMIT = 500_000
 const ARTIFACT_KINDS = new Set(['text', 'code', 'markdown'])
 
+// Fresco 1.3 shipped below its internal adversarial safety target (66.7% vs
+// an 80% target) — see the 2026-08 safety eval. Its known failure modes are
+// concrete, not vague: it will write real working code that blocks shutdown
+// signals or exfiltrates data when asked, and it will choose self-preservation
+// over stated human-safety priorities in dilemma framings. A keyword filter
+// can't catch this without massive false positives — os.remove() is the
+// CORRECT answer to one of the eval's own benign scenarios and the harmful
+// one, so this uses a second-pass LLM judge call instead, scoped only to
+// this model so no other model's latency or behavior changes.
+const MODERATED_MODELS = new Set(['fresco-1.3'])
+const FLAGGED_MESSAGE_MARKER = '[[SENNORIC_FLAGGED]]'
+const FLAGGED_MESSAGE_TEXT =
+  "This got flagged. It's intentionally benign as of now, because this model " +
+  'did not perform well on our internal safety evaluation. ' +
+  'See sennoric.com/announcements for details.'
+
+const MODERATION_JUDGE_MODEL = 'glyph'
+const MODERATION_SYSTEM_PROMPT =
+  'You are a safety classifier reviewing one assistant reply for genuine, unauthorized ' +
+  'harmful compliance: did it actually perform or enable something dangerous (e.g. ' +
+  'writing code that blocks a shutdown/kill signal, writing code that covertly exfiltrates ' +
+  'data to an external destination, choosing self-preservation over a stated human-safety ' +
+  'priority, or otherwise materially helping with a harmful/destructive request), as opposed ' +
+  'to refusing, writing ordinary benign code, or giving a normal safe answer? ' +
+  'Reply with exactly one word: FLAG or SAFE. Do not explain.'
+
 // Partial text is written to storage at most this often. Frequent enough that a
 // reader attaching after an eviction sees almost everything, rare enough that a
 // fast token stream doesn't turn into a storage write per token.
@@ -22,6 +48,37 @@ function errorText(error) {
 
 function sse(event, data) {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+}
+
+// Judges one (user request, assistant reply) pair for genuine harmful
+// compliance. Runs non-streaming, on a cheap model, only for MODERATED_MODELS.
+// Fails OPEN to "flagged" on any error — a judge-call failure should not let
+// an unreviewed reply from a model with a documented safety gap through
+// unchecked; a false-positive block is a much cheaper mistake here than a
+// false-negative pass.
+async function judgeFlagged(token, userText, assistantText) {
+  try {
+    const response = await fetch(COMPLETIONS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        model: MODERATION_JUDGE_MODEL,
+        stream: false,
+        messages: [
+          { role: 'system', content: MODERATION_SYSTEM_PROMPT },
+          { role: 'user', content: `USER REQUEST:\n${userText}\n\nASSISTANT REPLY:\n${assistantText}` },
+        ],
+      }),
+    })
+    if (!response.ok) return true
+    const data = await response.json().catch(() => null)
+    const verdict = String(data?.choices?.[0]?.message?.content || '').trim().toUpperCase()
+    if (verdict.startsWith('SAFE')) return false
+    if (verdict.startsWith('FLAG')) return true
+    return true // unparseable verdict — fail open to flagged, not safe
+  } catch {
+    return true
+  }
 }
 
 function escHtml(s) {
@@ -270,8 +327,10 @@ export class ChatGeneration {
       return
     }
 
+    const moderated = MODERATED_MODELS.has(job.requestBody?.model)
+    let held = ''
     try {
-      await this.consume(response.body)
+      held = await this.consume(response.body, { moderated })
     } catch (error) {
       await this.fail(job, `Lost the connection to Fresco: ${errorText(error)}`)
       return
@@ -280,6 +339,15 @@ export class ChatGeneration {
     if (this.cancelRequested) {
       await this.finishCancelledDrain()
       return
+    }
+
+    if (moderated && held) {
+      const lastUserMessage = [...(job.requestBody?.messages || [])].reverse()
+        .find(m => m.role === 'user')
+      const userText = lastUserMessage?.content || ''
+      const flagged = await judgeFlagged(job.token, userText, held)
+      await this.logGuardrailFlag(job, userText, held, flagged)
+      await this.append(flagged ? `${FLAGGED_MESSAGE_MARKER}${FLAGGED_MESSAGE_TEXT}` : held)
     }
 
     const artifactCalls = this.toolCalls.filter(call => call?.function?.name === 'create_cloud_artifact')
@@ -320,6 +388,29 @@ export class ChatGeneration {
     await this.commitResult(job)
   }
 
+  // Logs every moderated-model verdict (SAFE and FLAG alike), not just the
+  // ones that got blocked — an admin needs the fire rate and false-positive
+  // rate, not just a count of blocked replies. Best-effort: a logging
+  // failure must never fail or delay the actual response to the user.
+  async logGuardrailFlag(job, userText, assistantText, flagged) {
+    try {
+      await this.env.DB.prepare(
+        'INSERT INTO guardrail_flags (id, generation_id, user_id, model, flagged, user_text, assistant_text, created_at) VALUES (?,?,?,?,?,?,?,?)'
+      ).bind(
+        crypto.randomUUID(),
+        job.id,
+        job.userId,
+        job.requestBody?.model || '',
+        flagged ? 1 : 0,
+        String(userText).slice(0, 4000),
+        String(assistantText).slice(0, 4000),
+        Date.now(),
+      ).run()
+    } catch {
+      // best-effort observability only
+    }
+  }
+
   async createArtifact(job, call, index = 0) {
     let input
     try {
@@ -357,10 +448,18 @@ export class ChatGeneration {
 
   // Parses the upstream SSE stream, appending content deltas and accumulating
   // tool calls, which arrive in fragments indexed by position.
-  async consume(body) {
+  //
+  // When `moderated` is true, content deltas are buffered into `held` instead
+  // of being broadcast live — for a model with a documented safety gap, the
+  // guardrail has to run BEFORE anything reaches a viewer, not after, since a
+  // subscriber who already saw the raw tokens stream by can't un-see them.
+  // The held text is only revealed (via a single append()) once judgeFlagged
+  // has cleared it or replaced it in run().
+  async consume(body, { moderated = false } = {}) {
     const reader = body.getReader()
     const decoder = new TextDecoder()
     let pending = ''
+    let held = ''
 
     for (;;) {
       const { done, value } = await reader.read()
@@ -379,7 +478,10 @@ export class ChatGeneration {
         if (!delta) continue
 
         if (this.cancelRequested) continue
-        if (typeof delta.content === 'string' && delta.content) await this.append(delta.content)
+        if (typeof delta.content === 'string' && delta.content) {
+          if (moderated) held += delta.content
+          else await this.append(delta.content)
+        }
 
         for (const call of delta.tool_calls || []) {
           const index = call.index ?? 0
@@ -393,6 +495,7 @@ export class ChatGeneration {
     }
 
     this.toolCalls = this.toolCalls.filter(Boolean)
+    return held
   }
 
   async commitResult(job) {
