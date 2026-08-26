@@ -51,6 +51,12 @@ function errorText(error) {
   return String(error?.message || error || 'Generation failed').slice(0, 1000)
 }
 
+// Shown to the user for every failed generation, no matter the cause — never
+// put a detailed/technical error in front of a user (see CLAUDE.md, "User-
+// facing error messages"). The real reason still goes to chat_generations.error
+// and server logs via fail()'s `detail` argument, which is admin/log-only.
+const GENERIC_FAILURE_MESSAGE = 'Something went wrong generating this reply. Please try again.'
+
 function sse(event, data) {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
 }
@@ -608,17 +614,22 @@ export class ChatGeneration {
     await this.state.storage.setAlarm(Date.now() + 5000)
   }
 
-  async fail(job, message) {
+  // `detail` is the real, technical reason for the failure — it is stored in
+  // chat_generations.error (an admin-only column) for debugging, but MUST
+  // NEVER reach the user directly. Every user-visible surface (the SSE
+  // broadcast a subscribed tab sees, and the completion email for scheduled
+  // tasks) always gets the same generic GENERIC_FAILURE_MESSAGE instead.
+  async fail(job, detail) {
     if (this.cancelRequested || await this.state.storage.get('cancelRequested')) {
       await this.finishCancelledDrain()
       return
     }
     await this.env.DB.prepare(
       "UPDATE chat_generations SET status='failed', error=?, completed=? WHERE id=? AND user_id=?"
-    ).bind(errorText(message), Date.now(), job.id, job.userId).run().catch(() => {})
-    await this.settle({ status: 'failed', error: errorText(message) })
+    ).bind(errorText(detail), Date.now(), job.id, job.userId).run().catch(() => {})
+    await this.settle({ status: 'failed', error: GENERIC_FAILURE_MESSAGE })
     await this.state.storage.delete('job')
-    await notifyScheduledCompletion(this.env, job, { status: 'failed', error: errorText(message) })
+    await notifyScheduledCompletion(this.env, job, { status: 'failed', error: GENERIC_FAILURE_MESSAGE })
   }
 
   // Records how the generation ended and releases every reader. The terminal

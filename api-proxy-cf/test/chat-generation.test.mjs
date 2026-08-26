@@ -551,7 +551,7 @@ test('one generation fans out to every watching tab', async () => {
   }
 })
 
-test('a failed generation tells reconnecting tabs it failed', async () => {
+test('a failed generation tells reconnecting tabs it failed, without leaking the detailed reason', async () => {
   const db = new D1TestDatabase()
   seedChat(db)
   db.prepare(
@@ -566,11 +566,17 @@ test('a failed generation tells reconnecting tabs it failed', async () => {
   globalThis.fetch = async () => new Response('upstream exploded', { status: 500 })
   try { await generation.alarm() } finally { globalThis.fetch = realFetch }
 
-  assert.equal(db.prepare('SELECT status FROM chat_generations WHERE id=?').bind('gen-bad').first().status, 'failed')
+  // Detailed reason is admin/log-only: it belongs in the DB column, never in
+  // what a subscribed tab receives over SSE (see CLAUDE.md, "User-facing
+  // error messages").
+  const row = db.prepare('SELECT status, error FROM chat_generations WHERE id=?').bind('gen-bad').first()
+  assert.equal(row.status, 'failed')
+  assert.match(row.error, /exploded|HTTP 500/)
 
   const events = await readEvents(await generation.fetch(new Request('https://o/stream')))
   assert.equal(events.at(-1).event, 'error')
-  assert.match(events.at(-1).data.error, /exploded|HTTP 500/)
+  assert.equal(events.at(-1).data.error, 'Something went wrong generating this reply. Please try again.')
+  assert.doesNotMatch(events.at(-1).data.error, /exploded|HTTP 500/)
 })
 
 test('streamed tool calls are reassembled from their fragments', async () => {

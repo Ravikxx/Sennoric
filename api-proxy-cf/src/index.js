@@ -3600,17 +3600,16 @@ async function disabledModelIds(env) {
   return ids
 }
 
-// Per-model overrides for the kill-switch response body. Falls back to the
-// generic "temporarily disabled" message below when a model has no entry
-// here — only add one when the generic message isn't informative enough
-// (e.g. a known hosting-provider incident worth naming for the caller).
+// Per-model overrides for the kill-switch response body. Every message here
+// (and the generic fallback below) MUST stay free of cause, internal error
+// codes, or provider names — never put a detailed error in front of a user
+// (see CLAUDE.md, "User-facing error messages"). Detail belongs in server
+// logs only. Only add an entry here for user-facing copy differences (e.g.
+// naming the model), never to explain what went wrong.
 const DISABLED_MODEL_MESSAGES = {
   'fresco-1.3': {
-    message:
-      "Fresco 1.3 is temporarily unavailable due to a hosting issue with our inference provider. " +
-      "We're actively working on it — check sennoric.com/announcements for updates. (Error SENNORIC-FR13-HOST-001)",
+    message: "Fresco 1.3 is temporarily unavailable. Please check back shortly.",
     type: 'model_unavailable',
-    code: 'SENNORIC-FR13-HOST-001',
   },
 }
 
