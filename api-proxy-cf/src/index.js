@@ -3346,7 +3346,11 @@ app.post('/chats/:id/generations', async (c) => {
       case 'already_active': return json({ error: 'This chat already has a reply in progress.', generation: result.generation }, 409)
       case 'no_messages': return json({ error: 'The chat has no messages to answer.' }, 400)
       case 'bad_last_role': return json({ error: 'The chat does not end with a user or tool message.' }, 409)
-      default: return json({ error: 'Could not start the server-side reply.', detail: result.detail }, 500)
+      // `result.detail` is the real technical reason (already logged to
+      // chat_generations.error by startChatGeneration) — admin/log-only, per
+      // the same rule as chatGeneration.js's fail(): never put a detailed
+      // error in front of a user.
+      default: return json({ error: 'Could not start the server-side reply. Please try again.' }, 500)
     }
   }
   return json({ generation: result.generation }, 202)
