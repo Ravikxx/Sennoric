@@ -84,7 +84,11 @@ test('creating and revoking a key works through /account/keys/:id', async () => 
   assert.equal(afterRevoke.keys.length, 0)
 })
 
-test('the legacy /dashboard/keys and /dashboard/daily aliases still serve the same data as /account/keys', async () => {
+test('the legacy /dashboard/keys and /dashboard/daily aliases still serve the same data as /account/keys', async (t) => {
+  // Pinned before the alias's hardcoded 2026-09-09 expiry (see legacyAlias in
+  // index.js) — this test is about the alias forwarding correctly while
+  // live, not about the expiry itself, which the two tests below cover.
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-08T00:00:00Z').getTime() })
   const env = makeEnv()
   const headers = { Authorization: `Bearer ${await bearer()}` }
 
