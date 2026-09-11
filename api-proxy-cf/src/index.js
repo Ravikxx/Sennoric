@@ -5711,8 +5711,12 @@ async function runMessageReview(env, { trigger = 'scheduled', startedBy = null }
   }
 }
 
+// Cron strings here must match wrangler.toml's [triggers] exactly. Cadence
+// was cut ~5-10x from the original ("0 * * * *" / "* * * * *" / "*/5 * * * *")
+// on 2026-09-11 after these three jobs alone exhausted D1's free-tier daily
+// row-read cap with zero real user traffic that day.
 app.scheduled = async (event, env, ctx) => {
-  if (event.cron === '0 * * * *') {
+  if (event.cron === '0 */4 * * *') {
     ctx.waitUntil(Promise.all([
       runMessageReview(env, { trigger: 'scheduled' }),
       purgeExpiredMessageLogs(env.DB),
@@ -5722,7 +5726,7 @@ app.scheduled = async (event, env, ctx) => {
     ]))
     return
   }
-  if (event.cron === '* * * * *') {
+  if (event.cron === '*/10 * * * *') {
     ctx.waitUntil(dispatchScheduledDefinitions(env))
     return
   }
