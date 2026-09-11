@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite'
 import {
   CreditCodeError,
   buildSquareCheckoutPayload,
+  buildStripeCheckoutParams,
   canStartUsage,
   chargeAccountUsage,
   chargeSandboxUsage,
@@ -453,6 +454,29 @@ test('Square checkout explicitly enables Marketing coupon entry', () => {
   assert.equal(payload.checkout_options.subscription_plan_id, 'plan')
   assert.equal(payload.pre_populated_data.buyer_email, 'buyer@example.com')
   assert.equal(payload.order.line_items[0].catalog_object_id, 'item')
+})
+
+test('Stripe checkout params carry the user id through client_reference_id and metadata', () => {
+  const params = buildStripeCheckoutParams({
+    priceId: 'price_123',
+    userId: 'u1',
+    buyerEmail: 'buyer@example.com',
+    successUrl: 'https://sennoric.com/settings.html?upgraded=1',
+    cancelUrl: 'https://sennoric.com/settings.html',
+  })
+  assert.equal(params.mode, 'subscription')
+  assert.equal(params['line_items[0][price]'], 'price_123')
+  assert.equal(params['line_items[0][quantity]'], '1')
+  // Both client_reference_id and subscription metadata carry the user id —
+  // checkout.session.completed has the former, but a later renewal/
+  // cancellation event only echoes back subscription-level metadata, so the
+  // webhook needs whichever of the two survives to the event it's handling.
+  assert.equal(params.client_reference_id, 'u1')
+  assert.equal(params['metadata[user_id]'], 'u1')
+  assert.equal(params['subscription_data[metadata][user_id]'], 'u1')
+  assert.equal(params.customer_email, 'buyer@example.com')
+  assert.equal(params.success_url, 'https://sennoric.com/settings.html?upgraded=1')
+  assert.equal(params.cancel_url, 'https://sennoric.com/settings.html')
 })
 
 test('authenticated admin creation and user redemption routes work end to end', async () => {

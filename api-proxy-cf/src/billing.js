@@ -336,3 +336,30 @@ export function buildSquareCheckoutPayload({
     pre_populated_data: { buyer_email: buyerEmail },
   }
 }
+
+// Stripe's Checkout Sessions API takes classic form-encoded params, not JSON
+// — bracket notation is how it spells out nested/array fields. Returned as a
+// plain object of dotted/bracketed keys -> values; the caller turns this into
+// a URLSearchParams body. client_reference_id carries the Sennoric user id
+// so the webhook can match the completed session straight back to an
+// account without depending on email (which buyerEmail only pre-fills and a
+// buyer can still edit at checkout).
+export function buildStripeCheckoutParams({
+  priceId,
+  userId,
+  buyerEmail,
+  successUrl,
+  cancelUrl,
+}) {
+  return {
+    mode: 'subscription',
+    'line_items[0][price]': priceId,
+    'line_items[0][quantity]': '1',
+    client_reference_id: userId,
+    'metadata[user_id]': userId,
+    'subscription_data[metadata][user_id]': userId,
+    customer_email: buyerEmail,
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+  }
+}

@@ -3,6 +3,7 @@ import { cors } from 'hono/cors'
 import {
   CreditCodeError,
   buildSquareCheckoutPayload,
+  buildStripeCheckoutParams,
   canStartUsage,
   chargeAccountUsage,
   chargeSandboxUsage,
@@ -1629,12 +1630,51 @@ const deleteAccountHandler = async (c) => {
 app.delete('/account', deleteAccountHandler)
 app.delete('/dashboard/account', legacyAlias(deleteAccountHandler))
 
+// ── Billing (Stripe for new checkouts, Square kept for existing subscribers) ─
+// New "Upgrade to Pro" checkouts go through Stripe as of 2026-09-11 — see the
+// "Sennoric Pro" product (prod_VF7kDZLiu3J9nO) and its $7/mo price
+// (price_1UEdVCIg8gtAhQDmLvHbxV7V), same price as the Square plan below.
+// Square is left fully in place beneath this: existing subscribers keep
+// paying and renewing through Square, and /webhooks/square keeps syncing
+// their plan status. Only the checkout entry point moved.
+const STRIPE_API = 'https://api.stripe.com/v1'
+const STRIPE_PRICE_ID = 'price_1UEdVCIg8gtAhQDmLvHbxV7V'
+
+function stripeApi(env, path, { method = 'GET', params } = {}) {
+  const opts = {
+    method,
+    headers: {
+      'Authorization': `Bearer ${env.STRIPE_SECRET_KEY}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+  }
+  if (params) opts.body = new URLSearchParams(params)
+  return fetch(`${STRIPE_API}${path}`, opts)
+}
+
+// Stripe signs webhooks as `t=<unix-seconds>,v1=<hex hmac>` in the
+// Stripe-Signature header, over the string "<t>.<raw body>" — see
+// https://docs.stripe.com/webhooks#verify-manually. Multiple v1 values can
+// appear during a signing-secret rotation; any match is accepted.
+async function verifyStripeSignature(rawBody, signatureHeader, signingSecret) {
+  if (!signatureHeader || !signingSecret) return false
+  const timestamps = signatureHeader.split(',').filter((p) => p.startsWith('t=')).map((p) => p.slice(2))
+  const candidates = signatureHeader.split(',').filter((p) => p.startsWith('v1=')).map((p) => p.slice(3))
+  if (!timestamps[0] || !candidates.length) return false
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(signingSecret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamps[0]}.${rawBody}`))
+  const expectedHex = [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('')
+  return candidates.some((c) => timingSafeEqualStr(expectedHex, c))
+}
+
 // ── Billing (Square) ────────────────────────────────────────────────────────
 // The "Sennoric Pro" subscription plan variation in the Square catalog — see
 // the Monthly variation under plan LQIOMJA3CQPO2EPLORLAHASG. A Quarterly
 // variation also exists in Square (XW3UTLEQKQ6VDNORQO6XTZIS) but Square's
 // API won't let it be deleted once created; it's simply never referenced
-// here, so it's permanently unreachable from checkout.
+// here, so it's permanently unreachable from checkout. Neither variation ID
+// is used by /billing/checkout any more (that's Stripe now, above) — they're
+// kept only as identifiers for existing subscriptions already on this plan.
 const SQUARE_PLAN_VARIATION_ID = 'YEXEI6A4P4NTO73GCAJANOGJ'
 const SQUARE_ITEM_VARIATION_ID = '5NSUWXYLVOOXSZXZB7SY6XPQ' // "Regular" $7/mo, backs the plan above
 const SQUARE_API = 'https://connect.squareup.com/v2'
@@ -1661,33 +1701,72 @@ async function verifySquareSignature(rawBody, signatureHeader, signatureKey) {
   return timingSafeEqualStr(expected, signatureHeader)
 }
 
-// Mints a Square-hosted checkout page for the Sennoric Pro subscription. Square
-// collects the card, creates the Customer + Card + Subscription itself once
-// payment succeeds — nothing here touches card data. The buyer is matched
-// back to their Sennoric account by email in the webhook handler below, same
-// pattern already used for OAuth account matching (oauthFinish).
+// Mints a Stripe Checkout Session for the Sennoric Pro subscription. Stripe
+// collects the card and creates the Customer + Subscription itself once
+// payment succeeds — nothing here touches card data. client_reference_id and
+// metadata.user_id carry the Sennoric user id through to the webhook below,
+// so the completed session maps straight back to an account without relying
+// on email (a buyer can edit the pre-filled email at checkout).
 app.post('/billing/checkout', async (c) => {
   const user = await requireAuth(c)
   if (!user) return json({ error: 'Not authenticated' }, 401)
   if (user.plan === 'pro') return json({ error: 'Already on Pro' }, 400)
 
-  const res = await squareApi(c.env, '/online-checkout/payment-links', {
+  const res = await stripeApi(c.env, '/checkout/sessions', {
     method: 'POST',
-    body: JSON.stringify(buildSquareCheckoutPayload({
-      idempotencyKey: crypto.randomUUID(),
-      locationId: c.env.SQUARE_LOCATION_ID,
-      planVariationId: SQUARE_PLAN_VARIATION_ID,
-      itemVariationId: SQUARE_ITEM_VARIATION_ID,
+    params: buildStripeCheckoutParams({
+      priceId: STRIPE_PRICE_ID,
+      userId: user.id,
       buyerEmail: user.email,
-      redirectUrl: 'https://sennoric.com/settings.html',
-    })),
+      successUrl: 'https://sennoric.com/settings.html?upgraded=1',
+      cancelUrl: 'https://sennoric.com/settings.html',
+    }),
   })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok || !data.payment_link?.url) {
-    console.error('[billing/checkout] Square error:', JSON.stringify(data))
+  if (!res.ok || !data.url) {
+    console.error('[billing/checkout] Stripe error:', JSON.stringify(data))
     return json({ error: 'Could not start checkout right now.' }, 502)
   }
-  return json({ url: data.payment_link.url })
+  return json({ url: data.url })
+})
+
+app.post('/webhooks/stripe', async (c) => {
+  const rawBody = await c.req.text()
+  const signature = c.req.header('stripe-signature')
+  if (!await verifyStripeSignature(rawBody, signature, c.env.STRIPE_WEBHOOK_SECRET)) {
+    return json({ error: 'Invalid signature' }, 401)
+  }
+
+  const event = JSON.parse(rawBody)
+  const obj = event?.data?.object
+
+  // checkout.session.completed fires once, right after a new subscription is
+  // created — it's the only event carrying client_reference_id, so it's the
+  // one place a brand-new Stripe customer gets linked to its Sennoric user.
+  if (event.type === 'checkout.session.completed' && obj?.mode === 'subscription') {
+    const userId = obj.client_reference_id || obj.metadata?.user_id
+    if (!userId || !obj.customer || !obj.subscription) return json({ ok: true })
+    await c.env.DB.prepare(
+      'UPDATE users SET plan=?, plan_updated_at=strftime(\'%s\',\'now\'), stripe_customer_id=?, stripe_subscription_id=? WHERE id=?'
+    ).bind('pro', obj.customer, obj.subscription, userId).run()
+    return json({ ok: true })
+  }
+
+  // Renewals don't re-send client_reference_id, so later lifecycle events
+  // (cancellation, a failed-payment auto-cancel, plan changes) are matched
+  // by the stripe_customer_id already stored from checkout.session.completed
+  // above, same pairing pattern the Square webhook uses with customer_id.
+  if (event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.deleted') {
+    if (!obj?.customer) return json({ ok: true })
+    const activeStatuses = new Set(['active', 'trialing'])
+    const active = activeStatuses.has(obj.status) && event.type !== 'customer.subscription.deleted'
+    await c.env.DB.prepare(
+      'UPDATE users SET plan=?, plan_updated_at=strftime(\'%s\',\'now\') WHERE stripe_customer_id=?'
+    ).bind(active ? 'pro' : 'free', obj.customer).run()
+    return json({ ok: true })
+  }
+
+  return json({ ok: true })
 })
 
 app.get('/billing/credits', async (c) => {
