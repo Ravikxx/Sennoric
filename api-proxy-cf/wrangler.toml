@@ -51,4 +51,8 @@ pattern = "axion.amplifiedsmp.org/*"
 zone_name = "amplifiedsmp.org"
 
 [triggers]
-crons = ["*/5 * * * *", "0 * * * *", "* * * * *"]
+# Cadence deliberately kept low — the account hit D1's free-tier daily
+# row-read cap on 2026-09-11 with these three jobs alone (no user traffic
+# involved), so they're throttled ~5-10x from their original frequency.
+# See status.js CHECK_INTERVAL_MINUTES, which must track the status-check cron.
+crons = ["*/15 * * * *", "0 */4 * * *", "*/10 * * * *"]

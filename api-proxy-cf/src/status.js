@@ -7,9 +7,15 @@ export const SERVICES = [
 ]
 
 // Real check cadence — used to turn a day's down-check count into an
-// approximate downtime duration for the status page's day popover.
-export const CHECK_INTERVAL_MINUTES = 5
+// approximate downtime duration for the status page's day popover. Must
+// match the status-check cron in wrangler.toml's [triggers]. Cut from 5 to
+// 15 minutes on 2026-09-11 to stop exhausting D1's free-tier daily
+// row-read cap (this job, plus the other two crons, did it alone with zero
+// real user traffic that day).
+export const CHECK_INTERVAL_MINUTES = 15
 
+// A "down" incident now takes ~30 min to confirm (2 x 15 min) instead of
+// ~10 min, and recovery the same — the trade-off for the lighter cadence.
 const FAIL_THRESHOLD = 2 // consecutive failing checks before opening an incident
 const RECOVER_THRESHOLD = 2 // consecutive healthy checks before auto-resolving
 

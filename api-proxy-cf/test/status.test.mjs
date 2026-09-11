@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
-import { runStatusChecks, getStatusSnapshot } from '../src/status.js'
+import { runStatusChecks, getStatusSnapshot, CHECK_INTERVAL_MINUTES } from '../src/status.js'
 
 class Statement {
   constructor(database, sql, values = []) {
@@ -141,7 +141,7 @@ test('getStatusSnapshot buckets checks by day and computes uptime', async () => 
   assert.equal(fresco.days.length, 30)
   const todayBucket = fresco.days.find((d) => d.date === today)
   assert.equal(todayBucket.status, 'degraded')
-  assert.equal(todayBucket.down_minutes, 5, '1 down check * 5-minute cadence')
+  assert.equal(todayBucket.down_minutes, CHECK_INTERVAL_MINUTES, '1 down check * the real check cadence')
   assert.equal(fresco.uptime_pct, 75)
   assert.equal(fresco.status, 'down', 'latest fresco check was down')
   assert.equal(website.status, 'operational')
