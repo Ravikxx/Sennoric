@@ -1551,7 +1551,10 @@ test('login timing is normalized for a nonexistent account (no early return befo
   assert.equal(res.status, 401)
 })
 
-test('the legacy /dashboard/account alias still serves the same profile as /account', async () => {
+test('the legacy /dashboard/account alias still serves the same profile as /account', async (t) => {
+  // Pinned before the alias's hardcoded 2026-09-09 expiry (see legacyAlias in
+  // index.js) — this is about the alias forwarding correctly while live.
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-08T00:00:00Z').getTime() })
   const db = new D1TestDatabase()
   const secret = 'legacy-account-alias-secret'
   addUser(db, 'legacy-alias-user')

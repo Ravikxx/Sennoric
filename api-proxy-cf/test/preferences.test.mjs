@@ -66,7 +66,10 @@ test('partial preference updates leave every unrelated switch unchanged', async 
   assert.deepEqual(await values(), { notify_limit: 0, notify_announcements: 0, notify_scheduled: 1 })
 })
 
-test('the legacy /dashboard/prefs alias still serves the same data as /account/preferences', async () => {
+test('the legacy /dashboard/prefs alias still serves the same data as /account/preferences', async (t) => {
+  // Pinned before the alias's hardcoded 2026-09-09 expiry (see legacyAlias in
+  // index.js) — this is about the alias forwarding correctly while live.
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-08T00:00:00Z').getTime() })
   const env = makeEnv()
   const headers = { Authorization: `Bearer ${await bearer()}` }
   const viaNewPath = await (await app.request('/account/preferences', { headers }, env)).json()

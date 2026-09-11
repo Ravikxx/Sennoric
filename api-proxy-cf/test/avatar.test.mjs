@@ -198,7 +198,10 @@ test('replacing and removing an avatar deletes superseded R2 objects', async () 
   assert.equal(row.avatar_updated_at, null)
 })
 
-test('the legacy /dashboard/avatar alias still uploads through the same path as /account/avatar', async () => {
+test('the legacy /dashboard/avatar alias still uploads through the same path as /account/avatar', async (t) => {
+  // Pinned before the alias's hardcoded 2026-09-09 expiry (see legacyAlias in
+  // index.js) — this is about the alias forwarding correctly while live.
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-08T00:00:00Z').getTime() })
   const { env, token } = await fixture()
   const legacyUpload = await app.request('/dashboard/avatar', {
     method: 'PUT',
