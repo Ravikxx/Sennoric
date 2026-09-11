@@ -43,3 +43,25 @@ test('domain migration codes insert with a user association and start unredeemed
   assert.equal(row.user_id, 'u1')
   assert.equal(row.redeemed_at, null)
 })
+
+test('stripe billing columns exist alongside the untouched Square ones', () => {
+  const db = new DatabaseSync(':memory:')
+  db.exec('CREATE TABLE users (id TEXT PRIMARY KEY)')
+  db.exec(migration('007_plans.sql'))
+  db.exec(migration('047_stripe_billing.sql'))
+
+  const columns = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name)
+  assert.ok(columns.includes('stripe_customer_id'))
+  assert.ok(columns.includes('stripe_subscription_id'))
+  // Migration 047 only adds Stripe columns — it must not touch the existing
+  // Square ones, since existing subscribers still rely on them.
+  assert.ok(columns.includes('square_customer_id'))
+  assert.ok(columns.includes('square_subscription_id'))
+
+  db.prepare('INSERT INTO users (id) VALUES (?)').run('u1')
+  db.prepare('UPDATE users SET stripe_customer_id=?, stripe_subscription_id=? WHERE id=?')
+    .run('cus_123', 'sub_123', 'u1')
+  const row = db.prepare('SELECT stripe_customer_id, stripe_subscription_id FROM users WHERE id=?').get('u1')
+  assert.equal(row.stripe_customer_id, 'cus_123')
+  assert.equal(row.stripe_subscription_id, 'sub_123')
+})
