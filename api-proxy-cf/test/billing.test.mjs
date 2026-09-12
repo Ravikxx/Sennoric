@@ -1,10 +1,12 @@
-import test from 'node:test'
+import { afterEach, mock, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import {
   CreditCodeError,
   buildSquareCheckoutPayload,
   buildStripeCheckoutParams,
+  buildStripeCouponParams,
+  buildStripePromotionCodeParams,
   canStartUsage,
   chargeAccountUsage,
   chargeSandboxUsage,
@@ -90,6 +92,19 @@ class D1TestDatabase {
       );
       CREATE UNIQUE INDEX credit_redemptions_once
         ON credit_redemptions(code_id, user_id) WHERE repeatable=0;
+      CREATE TABLE promotions (
+        id TEXT PRIMARY KEY,
+        stripe_coupon_id TEXT NOT NULL,
+        stripe_promotion_code_id TEXT NOT NULL,
+        code TEXT NOT NULL,
+        percent_off INTEGER NOT NULL,
+        label TEXT NOT NULL,
+        starts_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        created_by TEXT NOT NULL,
+        created_at INTEGER DEFAULT (strftime('%s','now')),
+        ended_at INTEGER DEFAULT NULL
+      );
       CREATE TABLE rate_limits (
         key TEXT PRIMARY KEY,
         count INTEGER NOT NULL DEFAULT 0,
@@ -477,6 +492,40 @@ test('Stripe checkout params carry the user id through client_reference_id and m
   assert.equal(params.customer_email, 'buyer@example.com')
   assert.equal(params.success_url, 'https://sennoric.com/settings.html?upgraded=1')
   assert.equal(params.cancel_url, 'https://sennoric.com/settings.html')
+  // No active sitewide promotion: the manual code field is offered instead
+  // of a pre-applied discount.
+  assert.equal(params.allow_promotion_codes, 'true')
+  assert.equal(params['discounts[0][promotion_code]'], undefined)
+})
+
+test('Stripe checkout pre-applies an active sitewide promotion instead of offering manual entry', () => {
+  const params = buildStripeCheckoutParams({
+    priceId: 'price_123',
+    userId: 'u1',
+    buyerEmail: 'buyer@example.com',
+    successUrl: 'https://sennoric.com/settings.html?upgraded=1',
+    cancelUrl: 'https://sennoric.com/settings.html',
+    promotionCodeId: 'promo_abc',
+  })
+  // Stripe's Checkout Sessions API rejects a session that sets both
+  // `discounts` and `allow_promotion_codes` — exactly one of the two may
+  // appear.
+  assert.equal(params['discounts[0][promotion_code]'], 'promo_abc')
+  assert.equal(params.allow_promotion_codes, undefined)
+})
+
+test('Stripe coupon params apply once, to the first invoice only', () => {
+  const params = buildStripeCouponParams({ percentOff: 20, name: 'Launch week' })
+  assert.equal(params.percent_off, '20')
+  assert.equal(params.duration, 'once')
+  assert.equal(params.name, 'Launch week')
+})
+
+test('Stripe promotion code params carry the coupon, code, and expiry', () => {
+  const params = buildStripePromotionCodeParams({ couponId: 'coupon_1', code: 'SENNORIC-ABC123', expiresAt: 1999999999 })
+  assert.equal(params.coupon, 'coupon_1')
+  assert.equal(params.code, 'SENNORIC-ABC123')
+  assert.equal(params.expires_at, '1999999999')
 })
 
 test('authenticated admin creation and user redemption routes work end to end', async () => {
@@ -558,6 +607,160 @@ test('authenticated admin creation and user redemption routes work end to end', 
     headers: { Authorization: `Bearer ${adminToken}` },
   }, env)
   assert.equal(disableResponse.status, 200)
+})
+
+afterEach(() => mock.restoreAll())
+
+test('a sitewide promotion: created by an admin, pre-applied at checkout, visible publicly, then ended', async () => {
+  const db = new D1TestDatabase()
+  const secret = 'promotion-route-secret'
+  addUser(db, 'admin')
+  addUser(db, 'shopper')
+  db.prepare('INSERT INTO admin_allowlist (email, added_by) VALUES (?,?)')
+    .bind('admin@example.com', 'test')
+    .run()
+  const adminToken = await sessionToken('admin', secret)
+  const shopperToken = await sessionToken('shopper', secret)
+  const env = { DB: db, TOKEN_SECRET: secret, STRIPE_SECRET_KEY: 'sk_test_x' }
+
+  mock.method(globalThis, 'fetch', async (input, init) => {
+    const url = String(input)
+    if (url === 'https://api.stripe.com/v1/coupons') {
+      const body = new URLSearchParams(init.body)
+      assert.equal(body.get('percent_off'), '25')
+      assert.equal(body.get('duration'), 'once')
+      return Response.json({ id: 'coupon_test1' })
+    }
+    if (url === 'https://api.stripe.com/v1/promotion_codes') {
+      const body = new URLSearchParams(init.body)
+      assert.equal(body.get('coupon'), 'coupon_test1')
+      assert.equal(body.get('code'), 'LAUNCHWEEK')
+      return Response.json({ id: 'promo_code_test1' })
+    }
+    if (url === 'https://api.stripe.com/v1/checkout/sessions') {
+      const body = new URLSearchParams(init.body)
+      // The active promotion is pre-applied, not left for manual entry.
+      assert.equal(body.get('discounts[0][promotion_code]'), 'promo_code_test1')
+      assert.equal(body.get('allow_promotion_codes'), null)
+      return Response.json({ url: 'https://checkout.stripe.com/session-test' })
+    }
+    if (url === 'https://api.stripe.com/v1/promotion_codes/promo_code_test1') {
+      assert.equal(new URLSearchParams(init.body).get('active'), 'false')
+      return Response.json({ id: 'promo_code_test1', active: false })
+    }
+    throw new Error(`unexpected fetch to ${url}`)
+  })
+
+  const createResponse = await app.request('/admin/promotions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ percent_off: 25, duration_hours: 48, label: 'Launch week special', code: 'launchweek' }),
+  }, env)
+  assert.equal(createResponse.status, 201)
+  const created = await createResponse.json()
+  assert.equal(created.code, 'LAUNCHWEEK')
+  assert.equal(created.percent_off, 25)
+
+  // Public — visible to a signed-in free user, no auth required at all.
+  const publicAsShopper = await app.request('/billing/promotion', {
+    headers: { Authorization: `Bearer ${shopperToken}` },
+  }, env)
+  assert.deepEqual(await publicAsShopper.json(), {
+    active: true, id: created.id, code: 'LAUNCHWEEK', percent_off: 25, label: 'Launch week special', expires_at: created.expires_at,
+  })
+  const publicAnonymous = await app.request('/billing/promotion', {}, env)
+  assert.equal((await publicAnonymous.json()).active, true)
+
+  // Checkout pre-applies it automatically (asserted inside the fetch mock above).
+  const checkout = await app.request('/billing/checkout', {
+    method: 'POST', headers: { Authorization: `Bearer ${shopperToken}` },
+  }, env)
+  assert.equal(checkout.status, 200)
+  assert.equal((await checkout.json()).url, 'https://checkout.stripe.com/session-test')
+
+  // An already-Pro user isn't shown an ad to upgrade to the plan they're on.
+  db.prepare("UPDATE users SET plan='pro' WHERE id='shopper'").run()
+  const publicAsPro = await app.request('/billing/promotion', {
+    headers: { Authorization: `Bearer ${shopperToken}` },
+  }, env)
+  assert.equal((await publicAsPro.json()).active, false)
+
+  const list = await app.request('/admin/promotions', { headers: { Authorization: `Bearer ${adminToken}` } }, env)
+  assert.equal(list.status, 200)
+  assert.equal((await list.json()).promotions.length, 1)
+
+  const end = await app.request(`/admin/promotions/${created.id}/end`, {
+    method: 'POST', headers: { Authorization: `Bearer ${adminToken}` },
+  }, env)
+  assert.equal(end.status, 200)
+
+  const afterEnd = await app.request('/billing/promotion', {}, env)
+  assert.equal((await afterEnd.json()).active, false)
+  assert.equal((await app.request(`/admin/promotions/${created.id}/end`, {
+    method: 'POST', headers: { Authorization: `Bearer ${adminToken}` },
+  }, env)).status, 400, 'ending an already-ended promotion is rejected, not silently repeated')
+})
+
+test('creating a new promotion ends whichever one is currently active', async () => {
+  const db = new D1TestDatabase()
+  const secret = 'promotion-swap-secret'
+  addUser(db, 'admin')
+  db.prepare('INSERT INTO admin_allowlist (email, added_by) VALUES (?,?)').bind('admin@example.com', 'test').run()
+  const adminToken = await sessionToken('admin', secret)
+  const env = { DB: db, TOKEN_SECRET: secret, STRIPE_SECRET_KEY: 'sk_test_x' }
+
+  let coupons = 0
+  mock.method(globalThis, 'fetch', async (input, init) => {
+    const url = String(input)
+    if (url === 'https://api.stripe.com/v1/coupons') { coupons += 1; return Response.json({ id: `coupon_${coupons}` }) }
+    if (url === 'https://api.stripe.com/v1/promotion_codes') {
+      return Response.json({ id: `promo_${new URLSearchParams(init.body).get('code')}` })
+    }
+    if (url.startsWith('https://api.stripe.com/v1/promotion_codes/')) return Response.json({ active: false })
+    throw new Error(`unexpected fetch to ${url}`)
+  })
+
+  const create = (code) => app.request('/admin/promotions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ percent_off: 10, duration_hours: 24, label: code, code }),
+  }, env)
+
+  const first = await (await create('FIRST')).json()
+  const second = await (await create('SECOND')).json()
+
+  const { results: rows } = db.prepare('SELECT id, code, ended_at FROM promotions ORDER BY created_at').all()
+  assert.equal(rows.find((r) => r.id === first.id).ended_at !== null, true)
+  assert.equal(rows.find((r) => r.id === second.id).ended_at, null)
+})
+
+test('promotion validation rejects out-of-range percent_off, missing label, and duplicate codes', async () => {
+  const db = new D1TestDatabase()
+  const secret = 'promotion-validation-secret'
+  addUser(db, 'admin')
+  db.prepare('INSERT INTO admin_allowlist (email, added_by) VALUES (?,?)').bind('admin@example.com', 'test').run()
+  const adminToken = await sessionToken('admin', secret)
+  const env = { DB: db, TOKEN_SECRET: secret, STRIPE_SECRET_KEY: 'sk_test_x' }
+  const headers = { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json' }
+
+  const tooHigh = await app.request('/admin/promotions', { method: 'POST', headers, body: JSON.stringify({ percent_off: 150, duration_hours: 1, label: 'x' }) }, env)
+  assert.equal(tooHigh.status, 400)
+
+  const noLabel = await app.request('/admin/promotions', { method: 'POST', headers, body: JSON.stringify({ percent_off: 10, duration_hours: 1 }) }, env)
+  assert.equal(noLabel.status, 400)
+
+  mock.method(globalThis, 'fetch', async (input, init) => {
+    const url = String(input)
+    if (url === 'https://api.stripe.com/v1/coupons') return Response.json({ id: 'coupon_dup' })
+    if (url === 'https://api.stripe.com/v1/promotion_codes') {
+      return Response.json({ error: { code: 'resource_already_exists' } }, { status: 400 })
+    }
+    if (url === 'https://api.stripe.com/v1/coupons/coupon_dup') return Response.json({ deleted: true })
+    throw new Error(`unexpected fetch to ${url}`)
+  })
+  const dup = await app.request('/admin/promotions', { method: 'POST', headers, body: JSON.stringify({ percent_off: 10, duration_hours: 1, label: 'x', code: 'TAKEN' }) }, env)
+  assert.equal(dup.status, 400)
+  assert.match((await dup.json()).error, /already in use/)
 })
 
 test('only an authenticated admin can manually run pending message review', async () => {
