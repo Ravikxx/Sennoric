@@ -393,9 +393,16 @@ export function buildStripeCouponParams({ percentOff, name }) {
 // coupon alone isn't redeemable at checkout. expiresAt closes the
 // *redemption window* (when people can start using it), independent of how
 // long the coupon's own discount lasts on a subscription once redeemed.
+//
+// This account's Stripe API version wraps the coupon reference in a
+// `promotion` object (`promotion[type]=coupon`, `promotion[coupon]=<id>`)
+// rather than the flat `coupon` param older API versions/docs show —
+// confirmed against a live "Received unknown parameter: coupon" error and
+// the current API reference's own create example.
 export function buildStripePromotionCodeParams({ couponId, code, expiresAt }) {
   return {
-    coupon: couponId,
+    'promotion[type]': 'coupon',
+    'promotion[coupon]': couponId,
     code,
     expires_at: String(expiresAt),
   }
