@@ -1,9 +1,17 @@
-name = "axion-api"
+name = "sennoric-api"
 main = "src/index.js"
 compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
+# The Worker script itself is renamed (this `name`) to finish the
+# Axion -> Sennoric rebrand and retire the old script/routes. The D1
+# database_name and R2 bucket_name below are left as "axion-*" on purpose —
+# those point at real, already-populated resources by name/id (renaming a
+# binding label here doesn't rename the underlying resource, and R2 buckets
+# in particular can't be renamed in place without copying every object to a
+# new bucket). database_id already pins the exact database regardless of
+# its display name.
 
 [[d1_databases]]
 binding = "DB"
