@@ -4,6 +4,8 @@ import {
   CreditCodeError,
   buildSquareCheckoutPayload,
   buildStripeCheckoutParams,
+  buildStripeCouponParams,
+  buildStripePromotionCodeParams,
   canStartUsage,
   chargeAccountUsage,
   chargeSandboxUsage,
@@ -1701,6 +1703,19 @@ async function verifySquareSignature(rawBody, signatureHeader, signatureKey) {
   return timingSafeEqualStr(expected, signatureHeader)
 }
 
+// The single currently-running sitewide promotion, if any — "currently
+// running" meaning not manually ended and inside its [starts_at, expires_at)
+// redemption window. The admin routes below guarantee at most one row ever
+// matches this at a time, but the query itself doesn't assume that; it just
+// takes the newest match.
+async function getActivePromotion(db) {
+  return db.prepare(
+    `SELECT * FROM promotions
+     WHERE ended_at IS NULL AND expires_at > strftime('%s','now') AND starts_at <= strftime('%s','now')
+     ORDER BY created_at DESC LIMIT 1`
+  ).first()
+}
+
 // Mints a Stripe Checkout Session for the Sennoric Pro subscription. Stripe
 // collects the card and creates the Customer + Subscription itself once
 // payment succeeds — nothing here touches card data. client_reference_id and
@@ -1712,6 +1727,7 @@ app.post('/billing/checkout', async (c) => {
   if (!user) return json({ error: 'Not authenticated' }, 401)
   if (user.plan === 'pro') return json({ error: 'Already on Pro' }, 400)
 
+  const promo = await getActivePromotion(c.env.DB)
   const res = await stripeApi(c.env, '/checkout/sessions', {
     method: 'POST',
     params: buildStripeCheckoutParams({
@@ -1720,6 +1736,7 @@ app.post('/billing/checkout', async (c) => {
       buyerEmail: user.email,
       successUrl: 'https://sennoric.com/settings.html?upgraded=1',
       cancelUrl: 'https://sennoric.com/settings.html',
+      promotionCodeId: promo?.stripe_promotion_code_id,
     }),
   })
   const data = await res.json().catch(() => ({}))
@@ -1728,6 +1745,130 @@ app.post('/billing/checkout', async (c) => {
     return json({ error: 'Could not start checkout right now.' }, 502)
   }
   return json({ url: data.url })
+})
+
+// Public — the chat app's promo popup calls this for both signed-out
+// visitors and signed-in users, so it deliberately doesn't require auth. A
+// present, valid Authorization header still gets read (softly: a bad or
+// missing token just means "treat as anonymous") so an already-Pro user
+// isn't shown an ad to upgrade to the plan they're already on.
+app.get('/billing/promotion', async (c) => {
+  const promo = await getActivePromotion(c.env.DB)
+  if (!promo) return json({ active: false })
+
+  const user = await requireAuth(c).catch(() => null)
+  if (user?.plan === 'pro') return json({ active: false })
+
+  return json({
+    active: true,
+    id: promo.id,
+    code: promo.code,
+    percent_off: promo.percent_off,
+    label: promo.label,
+    expires_at: promo.expires_at,
+  })
+})
+
+function randomPromoCode() {
+  // Base32-ish, no ambiguous 0/O/1/I — read aloud-able and typeable.
+  const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
+  let code = 'SENNORIC-'
+  for (let i = 0; i < 6; i++) code += alphabet[Math.floor(Math.random() * alphabet.length)]
+  return code
+}
+
+// Creates a new sitewide Pro promotion: a Stripe coupon + a redeemable
+// promotion code, mirrored into D1 so /billing/checkout and /billing/promotion
+// don't need a live Stripe call on every request. Ends whatever promotion is
+// currently active first — the schema allows multiple rows, but the product
+// only ever wants one running.
+app.post('/admin/promotions', async (c) => {
+  const user = await requireAdmin(c)
+  if (!user) return json({ error: 'Forbidden' }, 403)
+
+  const { percent_off: percentOff, duration_hours: durationHours, label, code: customCode } = await c.req.json().catch(() => ({}))
+  if (!Number.isInteger(percentOff) || percentOff < 1 || percentOff > 99) {
+    return json({ error: 'percent_off must be a whole number from 1 to 99' }, 400)
+  }
+  if (!Number.isFinite(durationHours) || durationHours <= 0 || durationHours > 24 * 365) {
+    return json({ error: 'duration_hours must be a positive number, at most a year' }, 400)
+  }
+  const cleanLabel = String(label || '').trim().slice(0, 200)
+  if (!cleanLabel) return json({ error: 'label is required — this is what customers see' }, 400)
+  const code = String(customCode || randomPromoCode()).toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 40)
+  if (!code) return json({ error: 'code must contain at least one letter or number' }, 400)
+
+  const now = Math.floor(Date.now() / 1000)
+  const expiresAt = now + Math.round(durationHours * 3600)
+
+  const active = await getActivePromotion(c.env.DB)
+  if (active) {
+    await stripeApi(c.env, `/promotion_codes/${active.stripe_promotion_code_id}`, { method: 'POST', params: { active: 'false' } })
+      .catch((error) => console.error('[admin/promotions] failed to deactivate previous promotion code on Stripe:', error))
+    await c.env.DB.prepare('UPDATE promotions SET ended_at=? WHERE id=?').bind(now, active.id).run()
+  }
+
+  const couponRes = await stripeApi(c.env, '/coupons', {
+    method: 'POST',
+    params: buildStripeCouponParams({ percentOff, name: cleanLabel }),
+  })
+  const coupon = await couponRes.json().catch(() => ({}))
+  if (!couponRes.ok || !coupon.id) {
+    console.error('[admin/promotions] Stripe coupon error:', JSON.stringify(coupon))
+    return json({ error: 'Could not create the Stripe coupon.' }, 502)
+  }
+
+  const promoCodeRes = await stripeApi(c.env, '/promotion_codes', {
+    method: 'POST',
+    params: buildStripePromotionCodeParams({ couponId: coupon.id, code, expiresAt }),
+  })
+  const promoCode = await promoCodeRes.json().catch(() => ({}))
+  if (!promoCodeRes.ok || !promoCode.id) {
+    console.error('[admin/promotions] Stripe promotion code error:', JSON.stringify(promoCode))
+    // The coupon was created but the code wasn't — delete the orphan so it
+    // doesn't sit around unusable and confusing in the Stripe dashboard.
+    await stripeApi(c.env, `/coupons/${coupon.id}`, { method: 'DELETE' }).catch(() => {})
+    if (promoCode.error?.code === 'resource_already_exists') {
+      return json({ error: `The code "${code}" is already in use. Try a different one.` }, 400)
+    }
+    return json({ error: 'Could not create the Stripe promotion code.' }, 502)
+  }
+
+  const id = crypto.randomUUID()
+  await c.env.DB.prepare(
+    `INSERT INTO promotions (id, stripe_coupon_id, stripe_promotion_code_id, code, percent_off, label, starts_at, expires_at, created_by)
+     VALUES (?,?,?,?,?,?,?,?,?)`
+  ).bind(id, coupon.id, promoCode.id, code, percentOff, cleanLabel, now, expiresAt, user.email).run()
+
+  return json({ id, code, percent_off: percentOff, label: cleanLabel, starts_at: now, expires_at: expiresAt }, 201)
+})
+
+app.get('/admin/promotions', async (c) => {
+  const user = await requireAdmin(c)
+  if (!user) return json({ error: 'Forbidden' }, 403)
+  const { results } = await c.env.DB.prepare('SELECT * FROM promotions ORDER BY created_at DESC LIMIT 50').all()
+
+  // One Stripe call per row to surface real redemption counts — bounded to
+  // 50 rows and an admin-only, low-traffic page, so this stays cheap.
+  const withRedemptions = await Promise.all(results.map(async (row) => {
+    const res = await stripeApi(c.env, `/promotion_codes/${row.stripe_promotion_code_id}`).catch(() => null)
+    const data = res && res.ok ? await res.json().catch(() => null) : null
+    return { ...row, times_redeemed: data?.times_redeemed ?? null }
+  }))
+  return json({ promotions: withRedemptions })
+})
+
+app.post('/admin/promotions/:id/end', async (c) => {
+  const user = await requireAdmin(c)
+  if (!user) return json({ error: 'Forbidden' }, 403)
+  const row = await c.env.DB.prepare('SELECT * FROM promotions WHERE id=?').bind(c.req.param('id')).first()
+  if (!row) return json({ error: 'Promotion not found' }, 404)
+  if (row.ended_at) return json({ error: 'Already ended' }, 400)
+
+  await stripeApi(c.env, `/promotion_codes/${row.stripe_promotion_code_id}`, { method: 'POST', params: { active: 'false' } })
+    .catch((error) => console.error('[admin/promotions/end] failed to deactivate on Stripe:', error))
+  await c.env.DB.prepare('UPDATE promotions SET ended_at=? WHERE id=?').bind(Math.floor(Date.now() / 1000), row.id).run()
+  return json({ ok: true })
 })
 
 app.post('/webhooks/stripe', async (c) => {

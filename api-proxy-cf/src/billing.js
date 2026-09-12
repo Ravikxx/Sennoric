@@ -344,14 +344,21 @@ export function buildSquareCheckoutPayload({
 // so the webhook can match the completed session straight back to an
 // account without depending on email (which buyerEmail only pre-fills and a
 // buyer can still edit at checkout).
+// promotionCodeId, when given, pre-applies that Stripe promotion code to the
+// session — the buyer sees it already discounted, zero friction. Stripe's
+// Checkout Sessions API rejects a session that sets both `discounts` and
+// `allow_promotion_codes` at once, so this is deliberately either/or: no
+// active sitewide promotion means the manual "Add promotion code" field is
+// offered instead, for e.g. a one-off support-issued code.
 export function buildStripeCheckoutParams({
   priceId,
   userId,
   buyerEmail,
   successUrl,
   cancelUrl,
+  promotionCodeId,
 }) {
-  return {
+  const params = {
     mode: 'subscription',
     'line_items[0][price]': priceId,
     'line_items[0][quantity]': '1',
@@ -361,5 +368,35 @@ export function buildStripeCheckoutParams({
     customer_email: buyerEmail,
     success_url: successUrl,
     cancel_url: cancelUrl,
+  }
+  if (promotionCodeId) {
+    params['discounts[0][promotion_code]'] = promotionCodeId
+  } else {
+    params.allow_promotion_codes = 'true'
+  }
+  return params
+}
+
+// A "once" coupon applies to exactly the first invoice of a new
+// subscription — the standard shape for a "first month off" launch/growth
+// promo, as opposed to 'repeating' (N months) or 'forever' (life of the
+// subscription). name shows on the customer's invoice and receipt.
+export function buildStripeCouponParams({ percentOff, name }) {
+  return {
+    percent_off: String(percentOff),
+    duration: 'once',
+    name,
+  }
+}
+
+// The promotion code is the redeemable, human-typed/shareable half — the
+// coupon alone isn't redeemable at checkout. expiresAt closes the
+// *redemption window* (when people can start using it), independent of how
+// long the coupon's own discount lasts on a subscription once redeemed.
+export function buildStripePromotionCodeParams({ couponId, code, expiresAt }) {
+  return {
+    coupon: couponId,
+    code,
+    expires_at: String(expiresAt),
   }
 }

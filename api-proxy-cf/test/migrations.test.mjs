@@ -65,3 +65,23 @@ test('stripe billing columns exist alongside the untouched Square ones', () => {
   assert.equal(row.stripe_customer_id, 'cus_123')
   assert.equal(row.stripe_subscription_id, 'sub_123')
 })
+
+test('promotions table stores one row per sitewide discount campaign', () => {
+  const db = new DatabaseSync(':memory:')
+  db.exec(migration('048_promotions.sql'))
+
+  const columns = db.prepare('PRAGMA table_info(promotions)').all().map((c) => c.name)
+  assert.deepEqual(columns.sort(), [
+    'code', 'created_at', 'created_by', 'ended_at', 'expires_at', 'id',
+    'label', 'percent_off', 'starts_at', 'stripe_coupon_id', 'stripe_promotion_code_id',
+  ])
+
+  db.prepare(
+    `INSERT INTO promotions (id, stripe_coupon_id, stripe_promotion_code_id, code, percent_off, label, starts_at, expires_at, created_by)
+     VALUES (?,?,?,?,?,?,?,?,?)`
+  ).run('promo1', 'coupon_1', 'promo_code_1', 'LAUNCH20', 20, 'Launch week', 1000, 2000, 'admin@example.com')
+
+  const row = db.prepare('SELECT * FROM promotions WHERE id=?').get('promo1')
+  assert.equal(row.percent_off, 20)
+  assert.equal(row.ended_at, null)
+})
