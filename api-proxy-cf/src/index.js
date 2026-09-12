@@ -1928,7 +1928,7 @@ app.post('/webhooks/stripe', async (c) => {
     const userId = obj.client_reference_id || obj.metadata?.user_id
     if (!userId || !obj.customer || !obj.subscription) return json({ ok: true })
     await c.env.DB.prepare(
-      'UPDATE users SET plan=?, plan_updated_at=strftime(\'%s\',\'now\'), stripe_customer_id=?, stripe_subscription_id=? WHERE id=?'
+      'UPDATE users SET plan=?, plan_updated_at=strftime(\'%s\',\'now\'), stripe_customer_id=?, stripe_subscription_id=?, billing_flag=NULL, billing_flag_at=NULL WHERE id=?'
     ).bind('pro', obj.customer, obj.subscription, userId).run()
     return json({ ok: true })
   }
@@ -1941,14 +1941,77 @@ app.post('/webhooks/stripe', async (c) => {
     if (!obj?.customer) return json({ ok: true })
     const activeStatuses = new Set(['active', 'trialing'])
     const active = activeStatuses.has(obj.status) && event.type !== 'customer.subscription.deleted'
+    // A transition back to active (card fixed, dispute resolved and the
+    // subscription manually un-canceled, etc.) clears any stale flag —
+    // the subscription being active now is what matters, not its history.
     await c.env.DB.prepare(
-      'UPDATE users SET plan=?, plan_updated_at=strftime(\'%s\',\'now\') WHERE stripe_customer_id=?'
+      active
+        ? 'UPDATE users SET plan=?, plan_updated_at=strftime(\'%s\',\'now\'), billing_flag=NULL, billing_flag_at=NULL WHERE stripe_customer_id=?'
+        : 'UPDATE users SET plan=?, plan_updated_at=strftime(\'%s\',\'now\') WHERE stripe_customer_id=?'
     ).bind(active ? 'pro' : 'free', obj.customer).run()
+    return json({ ok: true })
+  }
+
+  // A refund only touches the charge, not the subscription itself — without
+  // this, a manually refunded Pro customer keeps access indefinitely since
+  // nothing else tells the backend the payment was undone.
+  if (event.type === 'charge.refunded') {
+    if (!obj?.customer || obj.amount_refunded < obj.amount) return json({ ok: true })
+    await flagAndDowngrade(c.env, obj.customer, 'refunded')
+    return json({ ok: true })
+  }
+
+  // Same blind spot as a refund, but a chargeback — cancel immediately
+  // rather than waiting for the dispute to resolve.
+  if (event.type === 'charge.dispute.created') {
+    const chargeCustomer = obj?.customer || (await lookupChargeCustomer(c.env, obj?.charge))
+    if (!chargeCustomer) return json({ ok: true })
+    await flagAndDowngrade(c.env, chargeCustomer, 'disputed')
+    return json({ ok: true })
+  }
+
+  // A failed renewal already downgrades correctly via
+  // customer.subscription.updated once Stripe's retries are exhausted, but
+  // that transition alone doesn't say *why* -- record it so support isn't
+  // guessing when a user asks why they lost Pro.
+  if (event.type === 'invoice.payment_failed') {
+    if (!obj?.customer) return json({ ok: true })
+    await c.env.DB.prepare(
+      'UPDATE users SET billing_flag=?, billing_flag_at=strftime(\'%s\',\'now\') WHERE stripe_customer_id=?'
+    ).bind('payment_failed', obj.customer).run()
     return json({ ok: true })
   }
 
   return json({ ok: true })
 })
+
+// Shared by the refund/dispute handlers: record the flag, downgrade to
+// free, and cancel the Stripe subscription outright so the customer isn't
+// billed again next cycle while their access is being clawed back.
+async function flagAndDowngrade(env, stripeCustomerId, flag) {
+  const user = await env.DB.prepare(
+    'SELECT id, stripe_subscription_id FROM users WHERE stripe_customer_id=?'
+  ).bind(stripeCustomerId).first()
+  if (!user) return
+
+  await env.DB.prepare(
+    'UPDATE users SET plan=?, plan_updated_at=strftime(\'%s\',\'now\'), billing_flag=?, billing_flag_at=strftime(\'%s\',\'now\') WHERE id=?'
+  ).bind('free', flag, user.id).run()
+
+  if (user.stripe_subscription_id) {
+    await stripeApi(env, `/subscriptions/${user.stripe_subscription_id}`, { method: 'DELETE' })
+      .catch((error) => console.error(`[webhooks/stripe] failed to cancel subscription after ${flag}:`, error))
+  }
+}
+
+// charge.dispute.created doesn't always inline the customer on the charge
+// object; fall back to fetching the charge itself.
+async function lookupChargeCustomer(env, chargeId) {
+  if (!chargeId) return null
+  const res = await stripeApi(env, `/charges/${chargeId}`).catch(() => null)
+  const data = res && res.ok ? await res.json().catch(() => null) : null
+  return data?.customer || null
+}
 
 app.get('/billing/credits', async (c) => {
   const user = await requireAuth(c)
