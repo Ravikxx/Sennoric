@@ -67,6 +67,8 @@ class D1TestDatabase {
         square_subscription_id TEXT,
         stripe_customer_id TEXT,
         stripe_subscription_id TEXT,
+        billing_flag TEXT DEFAULT NULL,
+        billing_flag_at INTEGER DEFAULT NULL,
         created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
       );
       CREATE TABLE credit_codes (
@@ -259,6 +261,22 @@ async function sessionToken(uid, secret) {
   )
   const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload))
   return `${payload}.${btoa(String.fromCharCode(...new Uint8Array(signature)))}`
+}
+
+// Mirrors verifyStripeSignature's own scheme so webhook tests can produce a
+// header Stripe's real signature check would accept.
+async function stripeSignature(rawBody, secret) {
+  const t = Math.floor(Date.now() / 1000)
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${t}.${rawBody}`))
+  const hex = [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('')
+  return `t=${t},v1=${hex}`
 }
 
 test('credit codes are normalized but plaintext is never stored', async () => {
@@ -663,6 +681,173 @@ test('billing portal refuses a user with no Stripe subscription, without calling
     method: 'POST', headers: { Authorization: `Bearer ${token}` },
   }, env)
   assert.equal(res.status, 400)
+})
+
+test('a full refund downgrades the user and cancels the Stripe subscription', async () => {
+  const db = new D1TestDatabase()
+  const webhookSecret = 'whsec_test'
+  addUser(db, 'refunded-user')
+  db.prepare("UPDATE users SET plan='pro', stripe_customer_id='cus_ref1', stripe_subscription_id='sub_ref1' WHERE id='refunded-user'").run()
+  const env = { DB: db, STRIPE_SECRET_KEY: 'sk_test_x', STRIPE_WEBHOOK_SECRET: webhookSecret }
+
+  let canceledSubscription = null
+  mock.method(globalThis, 'fetch', async (input, init) => {
+    canceledSubscription = { url: String(input), method: init.method }
+    return Response.json({ id: 'sub_ref1', status: 'canceled' })
+  })
+
+  const body = JSON.stringify({
+    type: 'charge.refunded',
+    data: { object: { customer: 'cus_ref1', amount: 700, amount_refunded: 700 } },
+  })
+  const res = await app.request('/webhooks/stripe', {
+    method: 'POST',
+    headers: { 'stripe-signature': await stripeSignature(body, webhookSecret) },
+    body,
+  }, env)
+  assert.equal(res.status, 200)
+
+  const row = db.prepare("SELECT plan, billing_flag FROM users WHERE id='refunded-user'").first()
+  assert.equal(row.plan, 'free')
+  assert.equal(row.billing_flag, 'refunded')
+  assert.equal(canceledSubscription.url, 'https://api.stripe.com/v1/subscriptions/sub_ref1')
+  assert.equal(canceledSubscription.method, 'DELETE')
+})
+
+test('a partial refund does not downgrade the user', async () => {
+  const db = new D1TestDatabase()
+  const webhookSecret = 'whsec_test'
+  addUser(db, 'partial-refund-user')
+  db.prepare("UPDATE users SET plan='pro', stripe_customer_id='cus_partial1' WHERE id='partial-refund-user'").run()
+  const env = { DB: db, STRIPE_SECRET_KEY: 'sk_test_x', STRIPE_WEBHOOK_SECRET: webhookSecret }
+
+  mock.method(globalThis, 'fetch', async () => { throw new Error('should not call Stripe') })
+
+  const body = JSON.stringify({
+    type: 'charge.refunded',
+    data: { object: { customer: 'cus_partial1', amount: 700, amount_refunded: 200 } },
+  })
+  const res = await app.request('/webhooks/stripe', {
+    method: 'POST',
+    headers: { 'stripe-signature': await stripeSignature(body, webhookSecret) },
+    body,
+  }, env)
+  assert.equal(res.status, 200)
+  assert.equal(db.prepare("SELECT plan FROM users WHERE id='partial-refund-user'").first().plan, 'pro')
+})
+
+test('a dispute cancels the subscription and flags the account', async () => {
+  const db = new D1TestDatabase()
+  const webhookSecret = 'whsec_test'
+  addUser(db, 'disputed-user')
+  db.prepare("UPDATE users SET plan='pro', stripe_customer_id='cus_dispute1', stripe_subscription_id='sub_dispute1' WHERE id='disputed-user'").run()
+  const env = { DB: db, STRIPE_SECRET_KEY: 'sk_test_x', STRIPE_WEBHOOK_SECRET: webhookSecret }
+
+  mock.method(globalThis, 'fetch', async (input, init) => {
+    assert.equal(String(input), 'https://api.stripe.com/v1/subscriptions/sub_dispute1')
+    assert.equal(init.method, 'DELETE')
+    return Response.json({ id: 'sub_dispute1', status: 'canceled' })
+  })
+
+  const body = JSON.stringify({
+    type: 'charge.dispute.created',
+    data: { object: { customer: 'cus_dispute1', charge: 'ch_dispute1' } },
+  })
+  const res = await app.request('/webhooks/stripe', {
+    method: 'POST',
+    headers: { 'stripe-signature': await stripeSignature(body, webhookSecret) },
+    body,
+  }, env)
+  assert.equal(res.status, 200)
+
+  const row = db.prepare("SELECT plan, billing_flag FROM users WHERE id='disputed-user'").first()
+  assert.equal(row.plan, 'free')
+  assert.equal(row.billing_flag, 'disputed')
+})
+
+test('a failed renewal payment flags the account without downgrading it', async () => {
+  const db = new D1TestDatabase()
+  const webhookSecret = 'whsec_test'
+  addUser(db, 'failed-payment-user')
+  db.prepare("UPDATE users SET plan='pro', stripe_customer_id='cus_fail1' WHERE id='failed-payment-user'").run()
+  const env = { DB: db, STRIPE_SECRET_KEY: 'sk_test_x', STRIPE_WEBHOOK_SECRET: webhookSecret }
+
+  mock.method(globalThis, 'fetch', async () => { throw new Error('should not call Stripe') })
+
+  const body = JSON.stringify({
+    type: 'invoice.payment_failed',
+    data: { object: { customer: 'cus_fail1' } },
+  })
+  const res = await app.request('/webhooks/stripe', {
+    method: 'POST',
+    headers: { 'stripe-signature': await stripeSignature(body, webhookSecret) },
+    body,
+  }, env)
+  assert.equal(res.status, 200)
+
+  const row = db.prepare("SELECT plan, billing_flag FROM users WHERE id='failed-payment-user'").first()
+  assert.equal(row.plan, 'pro')
+  assert.equal(row.billing_flag, 'payment_failed')
+})
+
+test('subscription becoming active again clears a stale billing flag', async () => {
+  const db = new D1TestDatabase()
+  const webhookSecret = 'whsec_test'
+  addUser(db, 'recovered-user')
+  db.prepare("UPDATE users SET plan='free', stripe_customer_id='cus_recover1', billing_flag='payment_failed', billing_flag_at=1 WHERE id='recovered-user'").run()
+  const env = { DB: db, STRIPE_SECRET_KEY: 'sk_test_x', STRIPE_WEBHOOK_SECRET: webhookSecret }
+
+  const body = JSON.stringify({
+    type: 'customer.subscription.updated',
+    data: { object: { customer: 'cus_recover1', status: 'active' } },
+  })
+  const res = await app.request('/webhooks/stripe', {
+    method: 'POST',
+    headers: { 'stripe-signature': await stripeSignature(body, webhookSecret) },
+    body,
+  }, env)
+  assert.equal(res.status, 200)
+
+  const row = db.prepare("SELECT plan, billing_flag FROM users WHERE id='recovered-user'").first()
+  assert.equal(row.plan, 'pro')
+  assert.equal(row.billing_flag, null)
+})
+
+test('a subscription canceled at period end downgrades the user once Stripe sends the deleted event', async () => {
+  const db = new D1TestDatabase()
+  const webhookSecret = 'whsec_test'
+  addUser(db, 'cancel-later-user')
+  db.prepare("UPDATE users SET plan='pro', stripe_customer_id='cus_cancel1', stripe_subscription_id='sub_cancel1' WHERE id='cancel-later-user'").run()
+  const env = { DB: db, STRIPE_SECRET_KEY: 'sk_test_x', STRIPE_WEBHOOK_SECRET: webhookSecret }
+
+  // Step 1: user hits "cancel" in the portal — Stripe flips
+  // cancel_at_period_end but the subscription stays active until the period
+  // ends, so plan must stay 'pro'.
+  const cancelScheduled = JSON.stringify({
+    type: 'customer.subscription.updated',
+    data: { object: { customer: 'cus_cancel1', status: 'active', cancel_at_period_end: true } },
+  })
+  let res = await app.request('/webhooks/stripe', {
+    method: 'POST',
+    headers: { 'stripe-signature': await stripeSignature(cancelScheduled, webhookSecret) },
+    body: cancelScheduled,
+  }, env)
+  assert.equal(res.status, 200)
+  assert.equal(db.prepare("SELECT plan FROM users WHERE id='cancel-later-user'").first().plan, 'pro')
+
+  // Step 2: the billing period actually ends and Stripe terminates the
+  // subscription — this is the event that must downgrade the user.
+  const terminated = JSON.stringify({
+    type: 'customer.subscription.deleted',
+    data: { object: { customer: 'cus_cancel1', status: 'canceled' } },
+  })
+  res = await app.request('/webhooks/stripe', {
+    method: 'POST',
+    headers: { 'stripe-signature': await stripeSignature(terminated, webhookSecret) },
+    body: terminated,
+  }, env)
+  assert.equal(res.status, 200)
+  assert.equal(db.prepare("SELECT plan FROM users WHERE id='cancel-later-user'").first().plan, 'free')
 })
 
 test('a sitewide promotion: created by an admin, pre-applied at checkout, visible publicly, then ended', async () => {
