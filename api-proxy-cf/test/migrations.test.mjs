@@ -85,3 +85,36 @@ test('promotions table stores one row per sitewide discount campaign', () => {
   assert.equal(row.percent_off, 20)
   assert.equal(row.ended_at, null)
 })
+
+test('usage_daily migrates from key_id to user_id, collapsing same-day rows across a user\'s keys', () => {
+  const db = new DatabaseSync(':memory:')
+  db.exec('CREATE TABLE users (id TEXT PRIMARY KEY)')
+  db.exec('CREATE TABLE api_keys (id TEXT PRIMARY KEY, user_id TEXT NOT NULL)')
+  db.exec(migration('013_untracked_tables.sql')) // original key_id-keyed usage_daily
+
+  db.prepare("INSERT INTO users (id) VALUES ('u1')").run()
+  db.prepare("INSERT INTO api_keys (id, user_id) VALUES ('key-a', 'u1'), ('key-b', 'u1')").run()
+  // Two keys, same user, same day — the pre-migration schema recorded these
+  // as two separate rows since it was keyed by key_id.
+  db.prepare("INSERT INTO usage_daily (key_id, date, count) VALUES ('key-a', '2026-09-12', 3)").run()
+  db.prepare("INSERT INTO usage_daily (key_id, date, count) VALUES ('key-b', '2026-09-12', 4)").run()
+  db.prepare("INSERT INTO usage_daily (key_id, date, count) VALUES ('key-a', '2026-09-11', 1)").run()
+
+  db.exec(migration('049_usage_daily_by_user.sql'))
+
+  const columns = db.prepare('PRAGMA table_info(usage_daily)').all().map((c) => c.name)
+  assert.deepEqual(columns.sort(), ['count', 'date', 'user_id'])
+
+  const rows = db.prepare('SELECT date, count FROM usage_daily WHERE user_id=? ORDER BY date').all('u1')
+    .map((r) => ({ date: r.date, count: r.count }))
+  assert.deepEqual(rows, [
+    { date: '2026-09-11', count: 1 },
+    { date: '2026-09-12', count: 7 }, // 3 + 4, collapsed onto one row
+  ])
+
+  // Going forward, session traffic (no key_id at all) inserts directly by
+  // user_id — this must not require an api_keys row to exist.
+  db.prepare("INSERT INTO usage_daily (user_id, date, count) VALUES (?,?,1) ON CONFLICT (user_id, date) DO UPDATE SET count=count+1")
+    .run('u1', '2026-09-13')
+  assert.equal(db.prepare('SELECT count FROM usage_daily WHERE user_id=? AND date=?').get('u1', '2026-09-13').count, 1)
+})

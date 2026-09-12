@@ -1505,6 +1505,17 @@ const requestAccountPasswordReset = async (c) => {
 app.post('/account/password-reset', requestAccountPasswordReset)
 app.post('/dashboard/change-password/request', legacyAlias(requestAccountPasswordReset))
 
+// Clients show included usage as "you've used N% of your allowance" rather
+// than a dollar figure — the underlying accounting is still microdollars
+// (see usage.*_microdollars/_usd below, kept for anything that still wants
+// the raw amount), but the dollar figures themselves are deliberately not
+// the thing surfaced to a person: they're an implementation detail of how
+// the budget is metered, not a price anyone is meant to reason about.
+function percentUsed(usedMicrodollars, limitMicrodollars) {
+  if (!limitMicrodollars) return 0
+  return Math.max(0, Math.min(100, Math.round((usedMicrodollars / limitMicrodollars) * 100)))
+}
+
 const getAccountProfile = async (c) => {
   const user = await requireAuth(c)
   if (!user) return json({ error: 'Not authenticated' }, 401)
@@ -1523,18 +1534,21 @@ const getAccountProfile = async (c) => {
       balance_usd: microdollarsToUsd(Math.max(0, usage.credit_balance || 0)),
     },
     usage: {
+      weekly_included_percent_used: percentUsed(usage.included_week_cost, weeklyBudget),
       weekly_included_used_microdollars: usage.included_week_cost,
       weekly_included_limit_microdollars: weeklyBudget,
       weekly_included_used_usd: microdollarsToUsd(usage.included_week_cost),
       weekly_included_limit_usd: microdollarsToUsd(weeklyBudget),
       weekly_started: usage.week_started,
       weekly_reset_at: usage.week_reset_at,
+      window_included_percent_used: percentUsed(usage.included_window_cost, windowBudget),
       window_included_used_microdollars: usage.included_window_cost,
       window_included_limit_microdollars: windowBudget,
       window_included_used_usd: microdollarsToUsd(usage.included_window_cost),
       window_included_limit_usd: microdollarsToUsd(windowBudget),
       window_started: usage.window_started,
       window_reset_at: usage.window_reset_at,
+      window_hours: Math.round(WINDOW_MS / 3_600_000),
     },
     metering: {
       unit: 'microdollar',
@@ -1743,6 +1757,32 @@ app.post('/billing/checkout', async (c) => {
   if (!res.ok || !data.url) {
     console.error('[billing/checkout] Stripe error:', JSON.stringify(data))
     return json({ error: 'Could not start checkout right now.' }, 502)
+  }
+  return json({ url: data.url })
+})
+
+// Self-service subscription management (cancel, update payment method, view
+// invoices) via Stripe's hosted Customer Portal — no custom cancel UI to
+// build or keep in sync with whatever Stripe adds to the portal later.
+// Only meaningful for a Stripe-billed Pro subscriber; a legacy Square
+// subscriber has no stripe_customer_id and there is no portal equivalent
+// for Square wired up here.
+app.post('/billing/portal', async (c) => {
+  const user = await requireAuth(c)
+  if (!user) return json({ error: 'Not authenticated' }, 401)
+  if (!user.stripe_customer_id) return json({ error: 'No Stripe subscription to manage on this account.' }, 400)
+
+  const res = await stripeApi(c.env, '/billing_portal/sessions', {
+    method: 'POST',
+    params: {
+      customer: user.stripe_customer_id,
+      return_url: 'https://sennoric.com/settings.html',
+    },
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok || !data.url) {
+    console.error('[billing/portal] Stripe error:', JSON.stringify(data))
+    return json({ error: 'Could not open subscription management right now.' }, 502)
   }
   return json({ url: data.url })
 })
@@ -3710,13 +3750,16 @@ const FRESCO_OUTPUT_PER_M_USD = 0.50
 // is the one unit that's actually meaningful for both the limiter and future
 // purchased credits.
 //
-// Weekly figures are the former monthly budget ÷4 (a weekly cadence has ~4.3
-// billing periods per month, but 4 keeps the numbers clean): $0.50/mo →
-// $0.125/wk free, $5.00/mo → $1.25/wk pro.
-const FREE_WEEKLY_BUDGET = 125_000    // $0.125/wk
-const PRO_WEEKLY_BUDGET  = 1_250_000  // $1.25/wk, 10x
-const FREE_WINDOW_BUDGET = 50_000     // $0.05 / 2hr
-const PRO_WINDOW_BUDGET  = 500_000    // $0.50 / 2hr, 10x
+// Weekly figures were originally the former monthly budget ÷4 (a weekly
+// cadence has ~4.3 billing periods per month, but 4 keeps the numbers
+// clean): $0.50/mo → $0.125/wk free, $5.00/mo → $1.25/wk pro. Free's two
+// figures were then halved (2026-09-12) while Pro's were left alone, so the
+// free/pro gap widened from 10x to 20x. The rolling window itself also moved
+// from 2 hours to 5 (see WINDOW_MS in billing.js) independently of this cut.
+const FREE_WEEKLY_BUDGET = 62_500     // $0.0625/wk (was $0.125/wk)
+const PRO_WEEKLY_BUDGET  = 1_250_000  // $1.25/wk, 20x free
+const FREE_WINDOW_BUDGET = 25_000     // $0.025 / 5hr (was $0.05/2hr)
+const PRO_WINDOW_BUDGET  = 500_000    // $0.50 / 5hr, 20x free
 
 function limitsForPlan(plan) {
   return plan === 'pro'
@@ -4179,14 +4222,20 @@ app.post('/v1/chat/completions', async (c) => {
         planWeeklyBudget,
         planWindowBudget,
       )
-      if (keyRow) await Promise.all([
+      // usage_daily is keyed by user, not by key — it must record every
+      // billed request regardless of auth method, or chat.html's
+      // session-token traffic (which has no keyRow) silently never appears
+      // on the usage chart. Only the api_keys row-specific counters are
+      // actually key-scoped, so only those stay gated on keyRow.
+      const dailyWrite = c.env.DB.prepare(
+        'INSERT INTO usage_daily (user_id, date, count) VALUES (?,?,1) ON CONFLICT (user_id, date) DO UPDATE SET count=count+1'
+      ).bind(billedUser.id, today).run()
+      await Promise.all(keyRow ? [
         c.env.DB.prepare(
           "UPDATE api_keys SET last_used=strftime('%s','now'), requests=requests+1, month_requests=month_requests+1, tokens=tokens+?, month_cost=month_cost+? WHERE id=?"
         ).bind(totalTokens, cost, keyRow.id).run(),
-        c.env.DB.prepare(
-          'INSERT INTO usage_daily (key_id, date, count) VALUES (?,?,1) ON CONFLICT (key_id, date) DO UPDATE SET count=count+1'
-        ).bind(keyRow.id, today).run(),
-      ])
+        dailyWrite,
+      ] : [dailyWrite])
 
       const newWeekCost = chargedUsage.included_week_cost
       const notifyThreshold = Math.floor(planWeeklyBudget * 0.8)
@@ -5404,11 +5453,10 @@ const getAccountKeysDaily = async (c) => {
   }
 
   const { results } = await c.env.DB.prepare(
-    `SELECT d.date, SUM(d.count) AS count
-     FROM usage_daily d
-     JOIN api_keys k ON k.id = d.key_id
-     WHERE k.user_id=? AND k.revoked=0 AND d.date >= ?
-     GROUP BY d.date ORDER BY d.date ASC`
+    `SELECT date, count
+     FROM usage_daily
+     WHERE user_id=? AND date >= ?
+     ORDER BY date ASC`
   ).bind(user.id, days[0]).all()
 
   const byDate = Object.fromEntries(results.map(r => [r.date, Number(r.count)]))
