@@ -521,9 +521,15 @@ test('Stripe coupon params apply once, to the first invoice only', () => {
   assert.equal(params.name, 'Launch week')
 })
 
-test('Stripe promotion code params carry the coupon, code, and expiry', () => {
+test('Stripe promotion code params wrap the coupon in a promotion object, not a flat coupon param', () => {
+  // Regression test: this account's API version rejects a flat `coupon`
+  // param on POST /v1/promotion_codes with "Received unknown parameter:
+  // coupon" — confirmed live. The coupon reference must be nested under
+  // `promotion[type]` / `promotion[coupon]`.
   const params = buildStripePromotionCodeParams({ couponId: 'coupon_1', code: 'SENNORIC-ABC123', expiresAt: 1999999999 })
-  assert.equal(params.coupon, 'coupon_1')
+  assert.equal(params['promotion[type]'], 'coupon')
+  assert.equal(params['promotion[coupon]'], 'coupon_1')
+  assert.equal(params.coupon, undefined)
   assert.equal(params.code, 'SENNORIC-ABC123')
   assert.equal(params.expires_at, '1999999999')
 })
@@ -633,7 +639,8 @@ test('a sitewide promotion: created by an admin, pre-applied at checkout, visibl
     }
     if (url === 'https://api.stripe.com/v1/promotion_codes') {
       const body = new URLSearchParams(init.body)
-      assert.equal(body.get('coupon'), 'coupon_test1')
+      assert.equal(body.get('promotion[type]'), 'coupon')
+      assert.equal(body.get('promotion[coupon]'), 'coupon_test1')
       assert.equal(body.get('code'), 'LAUNCHWEEK')
       return Response.json({ id: 'promo_code_test1' })
     }
