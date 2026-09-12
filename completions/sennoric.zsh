@@ -1,12 +1,12 @@
-#compdef axion
+#compdef sennoric
 # Sennoric zsh completion
 # Add to ~/.zshrc:
-#   fpath=(/path/to/axion/completions $fpath)
+#   fpath=(/path/to/sennoric/completions $fpath)
 #   autoload -Uz compinit && compinit
 # Or source directly:
-#   source /path/to/axion/completions/axion.zsh
+#   source /path/to/sennoric/completions/sennoric.zsh
 
-_axion() {
+_sennoric() {
   local -a models modes flags
 
   models=(
@@ -28,7 +28,7 @@ _axion() {
     'openrouter:Llama 3.3 via OpenRouter'
     'or:OpenRouter alias'
     'ollama:Local Ollama (llama3)'
-    'veil:Veil private model'
+    'glyph:Glyph private model'
   )
 
   modes=(
@@ -41,7 +41,7 @@ _axion() {
   flags=(
     '(-m --model)'{-m,--model}'[model alias or raw ID]:model:->model'
     '(-M --mode)'{-M,--mode}'[mode: ask|plan|auto]:mode:->mode'
-    '--link[link CLI to a running axion-serve web session]'
+    '--link[link CLI to a running sennoric-serve web session]'
     '--doctor[check dependencies, API keys, and environment]'
     '--update[pull latest from GitHub and rebuild]'
     '(-v --version)'{-v,--version}'[print version and exit]'
@@ -57,4 +57,4 @@ _axion() {
   esac
 }
 
-_axion "$@"
+_sennoric "$@"

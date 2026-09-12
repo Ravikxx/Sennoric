@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * axion-discord — standalone Discord bot daemon
+ * sennoric-discord — standalone Discord bot daemon
  * Runs without the TUI. DMs to the bot are answered by the configured model.
  *
  * Usage:
- *   axion-discord                  (uses saved token + model from ~/.axion/config.json)
- *   axion-discord --model lumen    (override model)
+ *   sennoric-discord                  (uses saved token + model from ~/.sennoric/config.json)
+ *   sennoric-discord --model fresco   (override model)
  */
 import minimist from 'minimist';
 import { homedir } from 'os';
@@ -43,7 +43,12 @@ async function reply(userId, userTag, content) {
   if (!histories.has(userId)) histories.set(userId, []);
   const history = histories.get(userId);
 
-  history.push({ role: 'user', content });
+  // Stage the user message locally and only commit it (with the assistant
+  // reply) once the API call succeeds. Committing before the call left an
+  // orphaned user message behind on any failure — and two consecutive user
+  // messages make Anthropic reject every later turn with a roles-must-
+  // alternate 400 until the user ran /clear.
+  const withPending = [...history, { role: 'user', content }];
 
   const { client, type } = createClient(modelAlias);
   const model = resolveModel(modelAlias);
@@ -57,7 +62,7 @@ You support these slash commands (the user types them in Discord DMs, you do NOT
   /about    — describe what you are and what you can do
 
 When a user types one of these commands, handle it directly without calling the AI again. For /clear, acknowledge that you have cleared context (you won't have persistent memory anyway between sessions). Be concise and natural.`.trim();
-  const messages = history.slice(-20); // keep last 20 turns per user
+  const messages = withPending.slice(-20); // keep last 20 turns per user
 
   let answer = '';
   if (type === 'anthropic') {
@@ -74,11 +79,12 @@ When a user types one of these commands, handle it directly without calling the 
     answer = resp.choices[0]?.message?.content || '';
   }
 
-  history.push({ role: 'assistant', content: answer });
+  // Both messages committed together, only after a successful API call.
+  history.push({ role: 'user', content }, { role: 'assistant', content: answer });
   return answer;
 }
 
-console.log(`axion-discord starting (model: ${modelAlias})…`);
+console.log(`sennoric-discord starting (model: ${modelAlias})…`);
 
 await startDiscord(token, async (msg) => {
   const userId  = msg.author.id;

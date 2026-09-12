@@ -1,12 +1,12 @@
 import OpenAI from 'openai';
 import { MODELS, MODEL_PROVIDERS, API_KEYS, BASE_URLS, CUSTOM_ENDPOINTS, REASONING_CONFIGS, PROVIDER_STRIP_FIELDS } from '../config.js';
-import { getAxionKey } from '../persist.js';
+import { getSennoricKey } from '../persist.js';
 import { ProviderError } from '../utils/namedError.js';
 
 // ── Sennoric-hosted provider credential seam ─────────────────────────────────
 //
-// fresco/glyph/axion-vision authenticate to the Worker with a Bearer credential
-// that can be either a persisted axion-sk- API key (set via /axion-key, the
+// fresco/glyph authenticate to the Worker with a Bearer credential
+// that can be either a persisted sennoric-sk- API key (set via /sennoric-key, the
 // CLI-native flow) or a host application's own account session token — the
 // Worker's /v1/chat/completions accepts both interchangeably. A host that
 // wants to supply the latter (e.g. Sennoric Desktop, which already holds an
@@ -19,16 +19,16 @@ import { ProviderError } from '../utils/namedError.js';
 // signed-in host picks up a refreshed or newly-cleared token without
 // restarting the agent. Returning a falsy value falls through to the
 // persisted CLI key, so a host can supply "no session token" (signed out)
-// without breaking a user who separately set one with /axion-key.
-let axionAuthResolver = null;
+// without breaking a user who separately set one with /sennoric-key.
+let sennoricAuthResolver = null;
 
-export function setAxionAuthResolver(resolver) {
-  axionAuthResolver = typeof resolver === 'function' ? resolver : null;
+export function setSennoricAuthResolver(resolver) {
+  sennoricAuthResolver = typeof resolver === 'function' ? resolver : null;
 }
 
-export function resolveAxionAuth() {
-  const resolved = axionAuthResolver ? axionAuthResolver() : null;
-  return resolved || getAxionKey();
+export function resolveSennoricAuth() {
+  const resolved = sennoricAuthResolver ? sennoricAuthResolver() : null;
+  return resolved || getSennoricKey();
 }
 
 // ── Per-model reasoning metadata and transport shim helpers ──────────────
@@ -126,26 +126,15 @@ export function createClient(modelAlias) {
   }
 
   if (provider === 'sennoric') {
-    const axionKey = resolveAxionAuth();
-    if (!axionKey) {
+    const sennoricKey = resolveSennoricAuth();
+    if (!sennoricKey) {
       throw new ProviderError({
         provider: 'sennoric',
-        message: 'Sennoric-hosted models require a Sennoric account and API key — use /login, or set a key with /axion-key <your-key>.',
+        message: 'Sennoric-hosted models require a Sennoric account and API key — use /login, or set a key with /sennoric-key <your-key>.',
       });
     }
     const baseURL = BASE_URLS[modelAlias] || 'https://api.sennoric.com/v1';
-    return { type: 'openai', client: new OpenAI({ apiKey: axionKey, baseURL }) };
-  }
-
-  if (provider === 'axion-vision') {
-    const axionKey = resolveAxionAuth();
-    if (!axionKey) {
-      throw new ProviderError({
-        provider: 'axion-vision',
-        message: 'Sennoric Vision requires a Sennoric account and API key — use /login, or set a key with /axion-key <your-key>.',
-      });
-    }
-    return { type: 'openai', client: new OpenAI({ apiKey: axionKey, baseURL: BASE_URLS['axion-vision'] }) };
+    return { type: 'openai', client: new OpenAI({ apiKey: sennoricKey, baseURL }) };
   }
 
   throw new ProviderError({ provider: modelAlias, message: `Unknown provider for model: ${modelAlias}` });

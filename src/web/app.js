@@ -34,9 +34,9 @@ async function initModels() {
     opt.textContent = m;
     modelPick.appendChild(opt);
   }
-  const saved = localStorage.getItem('axion-model');
+  const saved = localStorage.getItem('sennoric-model');
   if (saved && models.includes(saved)) modelPick.value = saved;
-  modelPick.addEventListener('change', () => localStorage.setItem('axion-model', modelPick.value));
+  modelPick.addEventListener('change', () => localStorage.setItem('sennoric-model', modelPick.value));
 }
 
 // ── Message rendering ─────────────────────────────────────────────────────────

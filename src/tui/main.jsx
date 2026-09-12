@@ -194,7 +194,7 @@ removeFatalHandlers = installFatalHandlers({
     try { MCP.stopAll(); } catch {}
     try { renderer.destroy?.(); } catch {}
     try { writeSync(1, '\x1b[?1000l\x1b[?1002l\x1b[?1006l\x1b[?1049l\x1b[?25h'); } catch {}
-    try { process.stderr.write(`\n${message}\nYour latest autosave can be resumed with axion --continue.\n`); } catch {}
+    try { process.stderr.write(`\n${message}\nYour latest autosave can be resumed with sennoric --continue.\n`); } catch {}
   },
 });
 

@@ -3,7 +3,7 @@ import { VISION_MODEL } from '../config.js';
 import { getSavedVisionModel } from '../persist.js';
 
 // On first import, load any saved vision model so /vision <model> persists across restarts
-if (!process.env.AXION_VISION_MODEL) {
+if (!process.env.SENNORIC_VISION_MODEL) {
   const saved = getSavedVisionModel();
   if (saved) VISION_MODEL.current = saved;
 }
@@ -30,7 +30,9 @@ export function parseCoordinates(text) {
 // Send a screenshot to the configured vision model and get a text description back.
 export async function analyzeScreen({ base64, mediaType, question, width, height }) {
   const alias = VISION_MODEL.current;
-  if (!alias) throw new Error('No vision model set. Use /vision <model> to configure one.');
+  if (!alias) {
+    throw new Error('No vision model set — the built-in sennoric-vision endpoint was retired. Use /vision <model> (e.g. /vision fresco) or set SENNORIC_VISION_MODEL.');
+  }
 
   const { client, type } = createClient(alias);
   const model = resolveModel(alias);

@@ -23,7 +23,7 @@ const REVIEW_SOURCES = new Map([
   ['assistant', 'assistant reply'],
 ])
 const REVIEW_DECISION_SCHEMA = {
-  name: 'axion_safety_review',
+  name: 'sennoric_safety_review',
   schema: {
     type: 'object',
     properties: {

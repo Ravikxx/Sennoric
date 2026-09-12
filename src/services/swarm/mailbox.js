@@ -1,5 +1,5 @@
 // File-backed per-agent mailbox for inter-agent messaging.
-// Each agent has an inbox at ~/.axion/teams/{team}/inboxes/{agent}.json
+// Each agent has an inbox at ~/.sennoric/teams/{team}/inboxes/{agent}.json
 // Uses simple file locking via atomic writes to prevent corruption.
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
@@ -7,7 +7,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { writeJsonAtomic } from '../../tui/persistence.js';
 
-const TEAMS_DIR = join(homedir(), '.axion', 'teams');
+const TEAMS_DIR = join(homedir(), '.sennoric', 'teams');
 
 /**
  * @typedef {Object} MailboxMessage

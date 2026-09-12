@@ -7,9 +7,9 @@ import {
   proxyGlyphRequest,
 } from '../src/glyph-upstream.js'
 
-const env = { RUNPOD_VEIL_ENDPOINT_ID: 'ep-veil-test', RUNPOD_API_KEY: 'rp-test-key' }
+const env = { RUNPOD_GLYPH_ENDPOINT_ID: 'ep-glyph-test', RUNPOD_API_KEY: 'rp-test-key' }
 
-const SERVED_MODEL_NAME = 'AxionLabsAI/Veil-1.1:Q4_K_M'
+const SERVED_MODEL_NAME = 'SennoricLabsAI/Glyph-1.1:Q4_K_M'
 
 const completion = {
   id: 'chatcmpl-test',
@@ -21,8 +21,8 @@ const completion = {
 }
 
 test('resolves the RunPod OpenAI-compatible chat and health URLs', () => {
-  assert.equal(GLYPH_UPSTREAM_URLS.chat(env), 'https://api.runpod.ai/v2/ep-veil-test/openai/v1/chat/completions')
-  assert.equal(GLYPH_UPSTREAM_URLS.health(env), 'https://api.runpod.ai/v2/ep-veil-test/health')
+  assert.equal(GLYPH_UPSTREAM_URLS.chat(env), 'https://api.runpod.ai/v2/ep-glyph-test/openai/v1/chat/completions')
+  assert.equal(GLYPH_UPSTREAM_URLS.health(env), 'https://api.runpod.ai/v2/ep-glyph-test/health')
 })
 
 test('sends the real served model name (vLLM has no alias for "glyph"), rewrites it back in the response', async () => {
@@ -35,7 +35,7 @@ test('sends the real served model name (vLLM has no alias for "glyph"), rewrites
   const response = await proxyGlyphRequest({ messages: [{ role: 'user', content: 'Hi' }] }, env, fetchImpl)
   assert.equal(response.status, 200)
   assert.equal((await response.json()).model, 'glyph')
-  assert.equal(seen.url, 'https://api.runpod.ai/v2/ep-veil-test/openai/v1/chat/completions')
+  assert.equal(seen.url, 'https://api.runpod.ai/v2/ep-glyph-test/openai/v1/chat/completions')
   assert.equal(seen.options.headers.Authorization, 'Bearer rp-test-key')
 
   const sent = JSON.parse(seen.options.body)

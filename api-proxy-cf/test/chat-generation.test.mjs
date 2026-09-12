@@ -217,7 +217,7 @@ test('creating a generation persists queued status and hands server-owned work t
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ model: 'lumen' }),
+    body: JSON.stringify({ model: 'fresco' }),
   }, env)
 
   assert.equal(response.status, 202)
@@ -260,7 +260,7 @@ test('artifact tools are replaced with the server-owned safe schema', async () =
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: 'lumen',
+      model: 'fresco',
       tools: [{
         type: 'function',
         function: { name: 'create_cloud_artifact', description: 'malicious replacement', parameters: {} },
@@ -280,7 +280,7 @@ test('a second generation for the same chat is rejected while the first is activ
   seedChat(db)
   db.prepare(
     'INSERT INTO chat_generations (id, chat_id, user_id, status, model, created) VALUES (?,?,?,?,?,?)'
-  ).bind('gen-existing', 'chat-1', 'user-1', 'running', 'lumen', 1).run()
+  ).bind('gen-existing', 'chat-1', 'user-1', 'running', 'fresco', 1).run()
   db.prepare('UPDATE chats SET active_generation_id=? WHERE id=?').bind('gen-existing', 'chat-1').run()
   const secret = 'chat-generation-secret'
   const token = await sessionToken('user-1', secret)
@@ -291,7 +291,7 @@ test('a second generation for the same chat is rejected while the first is activ
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ model: 'lumen' }),
+    body: JSON.stringify({ model: 'fresco' }),
   }, { DB: db, TOKEN_SECRET: secret })
 
   assert.equal(response.status, 409)
@@ -305,7 +305,7 @@ test('the authenticated cancel route targets only the owned active generation', 
   seedChat(db)
   db.prepare(
     'INSERT INTO chat_generations (id, chat_id, user_id, status, model, created) VALUES (?,?,?,?,?,?)'
-  ).bind('gen-cancel-route', 'chat-1', 'user-1', 'running', 'lumen', 1).run()
+  ).bind('gen-cancel-route', 'chat-1', 'user-1', 'running', 'fresco', 1).run()
   const secret = 'chat-generation-secret'
   const token = await sessionToken('user-1', secret)
   let durableRequest
@@ -340,12 +340,12 @@ test('cancelling closes viewers immediately, drains upstream, and never commits 
   seedChat(db)
   db.prepare(
     'INSERT INTO chat_generations (id, chat_id, user_id, status, model, created) VALUES (?,?,?,?,?,?)'
-  ).bind('gen-cancel', 'chat-1', 'user-1', 'queued', 'lumen', 1).run()
+  ).bind('gen-cancel', 'chat-1', 'user-1', 'queued', 'fresco', 1).run()
 
   const storage = new MemoryStorage()
   await storage.put('job', {
     id: 'gen-cancel', chatId: 'chat-1', userId: 'user-1', token: 't',
-    requestBody: { model: 'lumen', messages: [{ role: 'user', content: 'Stop me' }] },
+    requestBody: { model: 'fresco', messages: [{ role: 'user', content: 'Stop me' }] },
   })
   const generation = new ChatGeneration({ storage }, { DB: db })
   const watching = await generation.fetch(new Request('https://o/stream'))
@@ -392,7 +392,7 @@ test('the Durable Object appends the assistant reply and completes the job after
   seedChat(db)
   db.prepare(
     'INSERT INTO chat_generations (id, chat_id, user_id, status, model, created) VALUES (?,?,?,?,?,?)'
-  ).bind('gen-1', 'chat-1', 'user-1', 'queued', 'lumen', 1).run()
+  ).bind('gen-1', 'chat-1', 'user-1', 'queued', 'fresco', 1).run()
   db.prepare('UPDATE chats SET active_generation_id=? WHERE id=?').bind('gen-1', 'chat-1').run()
 
   const storage = new MemoryStorage()
@@ -401,7 +401,7 @@ test('the Durable Object appends the assistant reply and completes the job after
     chatId: 'chat-1',
     userId: 'user-1',
     token: 'signed-job-token',
-    requestBody: { model: 'lumen', messages: [{ role: 'user', content: 'Hello' }] },
+    requestBody: { model: 'fresco', messages: [{ role: 'user', content: 'Hello' }] },
   })
   const generation = new ChatGeneration({ storage }, { DB: db })
 
@@ -436,7 +436,7 @@ test('a stored result retries only the D1 commit and never calls the model twice
   seedChat(db)
   db.prepare(
     'INSERT INTO chat_generations (id, chat_id, user_id, status, model, created) VALUES (?,?,?,?,?,?)'
-  ).bind('gen-2', 'chat-1', 'user-1', 'running', 'lumen', 1).run()
+  ).bind('gen-2', 'chat-1', 'user-1', 'running', 'fresco', 1).run()
 
   const storage = new MemoryStorage()
   await storage.put('job', {
@@ -474,7 +474,7 @@ test('a tab attaching after the reply finished replays the whole thing', async (
   seedChat(db)
   db.prepare(
     'INSERT INTO chat_generations (id, chat_id, user_id, status, model, created) VALUES (?,?,?,?,?,?)'
-  ).bind('gen-late', 'chat-1', 'user-1', 'queued', 'lumen', 1).run()
+  ).bind('gen-late', 'chat-1', 'user-1', 'queued', 'fresco', 1).run()
 
   const storage = new MemoryStorage()
   await storage.put('job', {
@@ -482,7 +482,7 @@ test('a tab attaching after the reply finished replays the whole thing', async (
     chatId: 'chat-1',
     userId: 'user-1',
     token: 'job-token',
-    requestBody: { model: 'lumen', messages: [{ role: 'user', content: 'Hi' }] },
+    requestBody: { model: 'fresco', messages: [{ role: 'user', content: 'Hi' }] },
   })
   const generation = new ChatGeneration({ storage }, { DB: db })
 
@@ -503,7 +503,7 @@ test('a tab attaching mid-generation gets what it missed, then the rest live', a
   seedChat(db)
   db.prepare(
     'INSERT INTO chat_generations (id, chat_id, user_id, status, model, created) VALUES (?,?,?,?,?,?)'
-  ).bind('gen-mid', 'chat-1', 'user-1', 'running', 'lumen', 1).run()
+  ).bind('gen-mid', 'chat-1', 'user-1', 'running', 'fresco', 1).run()
 
   const storage = new MemoryStorage()
   await storage.put('job', {
@@ -556,7 +556,7 @@ test('a failed generation tells reconnecting tabs it failed, without leaking the
   seedChat(db)
   db.prepare(
     'INSERT INTO chat_generations (id, chat_id, user_id, status, model, created) VALUES (?,?,?,?,?,?)'
-  ).bind('gen-bad', 'chat-1', 'user-1', 'running', 'lumen', 1).run()
+  ).bind('gen-bad', 'chat-1', 'user-1', 'running', 'fresco', 1).run()
 
   const storage = new MemoryStorage()
   await storage.put('job', { id: 'gen-bad', chatId: 'chat-1', userId: 'user-1', token: 't', requestBody: {} })
@@ -584,7 +584,7 @@ test('streamed tool calls are reassembled from their fragments', async () => {
   seedChat(db)
   db.prepare(
     'INSERT INTO chat_generations (id, chat_id, user_id, status, model, created) VALUES (?,?,?,?,?,?)'
-  ).bind('gen-tool', 'chat-1', 'user-1', 'queued', 'lumen', 1).run()
+  ).bind('gen-tool', 'chat-1', 'user-1', 'queued', 'fresco', 1).run()
 
   const storage = new MemoryStorage()
   await storage.put('job', {
@@ -616,7 +616,7 @@ test('the hosted artifact tool creates one linked artifact and returns a complet
   seedChat(db)
   db.prepare(
     'INSERT INTO chat_generations (id, chat_id, user_id, status, model, created) VALUES (?,?,?,?,?,?)'
-  ).bind('gen-artifact', 'chat-1', 'user-1', 'queued', 'lumen', 1).run()
+  ).bind('gen-artifact', 'chat-1', 'user-1', 'queued', 'fresco', 1).run()
 
   const storage = new MemoryStorage()
   await storage.put('job', {
@@ -669,12 +669,12 @@ test('a scheduled task that completes emails the user', async () => {
   ).bind('sched-1', 'user-1', 'Daily digest', 'Summarize today', '* * * * *').run()
   db.prepare(
     'INSERT INTO chat_generations (id, chat_id, user_id, status, model, created) VALUES (?,?,?,?,?,?)'
-  ).bind('gen-sched', 'chat-1', 'user-1', 'queued', 'lumen', 1).run()
+  ).bind('gen-sched', 'chat-1', 'user-1', 'queued', 'fresco', 1).run()
 
   const storage = new MemoryStorage()
   await storage.put('job', {
     id: 'gen-sched', chatId: 'chat-1', userId: 'user-1', token: 't',
-    requestBody: { model: 'lumen', messages: [{ role: 'user', content: 'Summarize today' }] },
+    requestBody: { model: 'fresco', messages: [{ role: 'user', content: 'Summarize today' }] },
     scheduledDefinitionId: 'sched-1',
   })
   const generation = new ChatGeneration({ storage }, { DB: db, RESEND_API_KEY: 'test-key' })
@@ -704,7 +704,7 @@ test('a scheduled task that fails emails the user with the failure reason', asyn
   ).bind('sched-2', 'user-1', 'Broken task', 'Do a thing', '* * * * *').run()
   db.prepare(
     'INSERT INTO chat_generations (id, chat_id, user_id, status, model, created) VALUES (?,?,?,?,?,?)'
-  ).bind('gen-fail', 'chat-1', 'user-1', 'queued', 'lumen', 1).run()
+  ).bind('gen-fail', 'chat-1', 'user-1', 'queued', 'fresco', 1).run()
 
   const storage = new MemoryStorage()
   await storage.put('job', {
@@ -736,12 +736,12 @@ test('a regular, non-scheduled generation does not send a completion email', asy
   db.prepare('UPDATE users SET email=? WHERE id=?').bind('owner@example.com', 'user-1').run()
   db.prepare(
     'INSERT INTO chat_generations (id, chat_id, user_id, status, model, created) VALUES (?,?,?,?,?,?)'
-  ).bind('gen-plain', 'chat-1', 'user-1', 'queued', 'lumen', 1).run()
+  ).bind('gen-plain', 'chat-1', 'user-1', 'queued', 'fresco', 1).run()
 
   const storage = new MemoryStorage()
   await storage.put('job', {
     id: 'gen-plain', chatId: 'chat-1', userId: 'user-1', token: 't',
-    requestBody: { model: 'lumen', messages: [{ role: 'user', content: 'Hi' }] },
+    requestBody: { model: 'fresco', messages: [{ role: 'user', content: 'Hi' }] },
   })
   const generation = new ChatGeneration({ storage }, { DB: db, RESEND_API_KEY: 'test-key' })
 
@@ -766,12 +766,12 @@ test('a user who opted out of scheduled-task emails does not get one', async () 
   ).bind('sched-3', 'user-1', 'Quiet task', 'Do a thing quietly', '* * * * *').run()
   db.prepare(
     'INSERT INTO chat_generations (id, chat_id, user_id, status, model, created) VALUES (?,?,?,?,?,?)'
-  ).bind('gen-quiet', 'chat-1', 'user-1', 'queued', 'lumen', 1).run()
+  ).bind('gen-quiet', 'chat-1', 'user-1', 'queued', 'fresco', 1).run()
 
   const storage = new MemoryStorage()
   await storage.put('job', {
     id: 'gen-quiet', chatId: 'chat-1', userId: 'user-1', token: 't',
-    requestBody: { model: 'lumen', messages: [{ role: 'user', content: 'Do a thing quietly' }] },
+    requestBody: { model: 'fresco', messages: [{ role: 'user', content: 'Do a thing quietly' }] },
     scheduledDefinitionId: 'sched-3',
   })
   const generation = new ChatGeneration({ storage }, { DB: db, RESEND_API_KEY: 'test-key' })

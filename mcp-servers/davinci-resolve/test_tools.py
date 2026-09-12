@@ -64,7 +64,7 @@ def main():
     if write:
         print("\n--- write round-trip (marker at frame 0) ---")
         print(text_of(call(s, "tools/call", {"name": "resolve_add_marker",
-              "arguments": {"frame": 0, "color": "Green", "name": "axion-test",
+              "arguments": {"frame": 0, "color": "Green", "name": "sennoric-test",
                             "note": "created by test_tools.py"}})))
         print(text_of(call(s, "tools/call", {"name": "resolve_list_markers", "arguments": {}})))
         print("(remove it in Resolve: right-click the marker on the timeline ruler -> Delete)")

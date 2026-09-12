@@ -4,6 +4,10 @@ class AgentBus {
   constructor() {
     this._mailboxes = new Map(); // label → Message[]
     this._mainInbox = [];
+    this._notices = new Map();   // label → creation/lifecycle notices (separate
+                                 // from direct messages so read_messages can
+                                 // surface them without draining _mainInbox,
+                                 // which the spawn/todo/watcher flows rely on)
   }
 
   register(label) {
@@ -18,6 +22,19 @@ class AgentBus {
       if (!this._mailboxes.has(to)) this._mailboxes.set(to, []);
       this._mailboxes.get(to).push(msg);
     }
+  }
+
+  // One-way lifecycle notice (e.g. "session X was created"). Read alongside
+  // direct messages by read_messages / wait_for_message.
+  notifyCreation(from, to, content) {
+    if (!this._notices.has(to)) this._notices.set(to, []);
+    this._notices.get(to).push({ from, to, content, at: new Date().toLocaleTimeString() });
+  }
+
+  readNotices(label) {
+    const msgs = [...(this._notices.get(label) || [])];
+    this._notices.set(label, []);
+    return msgs;
   }
 
   read(label) {

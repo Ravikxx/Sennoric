@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { MODELS, MODEL_PROVIDERS, CONTEXT_WINDOWS, CUSTOM_ENDPOINTS } from '../src/config.js';
-import { createClient, resolveModel, resolveProvider, setAxionAuthResolver } from '../src/agent/models.js';
+import { createClient, resolveModel, resolveProvider, setSennoricAuthResolver } from '../src/agent/models.js';
 
 // ── Model list ─────────────────────────────────────────────────────────────────
 
@@ -41,7 +41,13 @@ test('MODEL_PROVIDERS covers all MODELS keys', () => {
 test('resolveModel returns model ID for known alias', () => {
   assert.equal(resolveModel('fresco'), 'fresco');
   assert.equal(resolveModel('glyph'), 'glyph');
-  assert.equal(resolveModel('axion-vision'), 'axion-vision');
+});
+
+test('sennoric-vision is fully retired', () => {
+  assert.equal(MODELS['sennoric-vision'], undefined);
+  assert.equal(MODEL_PROVIDERS['sennoric-vision'], undefined);
+  // Falls through to the default OpenAI-compatible routing, not a dedicated provider
+  assert.notEqual(resolveProvider('sennoric-vision'), 'sennoric-vision');
 });
 
 test('resolveModel passthrough for unknown alias', () => {
@@ -53,7 +59,6 @@ test('resolveModel passthrough for unknown alias', () => {
 test('resolveProvider returns sennoric for Sennoric-hosted models', () => {
   assert.equal(resolveProvider('fresco'), 'sennoric');
   assert.equal(resolveProvider('glyph'), 'sennoric');
-  assert.equal(resolveProvider('axion-vision'), 'axion-vision');
   CUSTOM_ENDPOINTS['rp-test'] = { baseURL: 'http://localhost:9999/v1', apiKey: 'k', model: 'm' };
   try {
     assert.equal(resolveProvider('rp-test'), 'custom');
@@ -81,20 +86,19 @@ test('context windows are positive integers', () => {
 
 // ── Sennoric auth resolver seam ──────────────────────────────────────────────
 //
-// getAxionKey() reads a real ~/.axion/config.json, so these tests avoid
+// getSennoricKey() reads a real ~/.sennoric/config.json, so these tests avoid
 // asserting a specific persisted-key value (environment-dependent) and
 // instead assert the resolver takes precedence when it returns something,
 // and that a falsy resolver result is indistinguishable from no resolver at
 // all having been registered.
 
-test('createClient prefers the registered Sennoric auth resolver for fresco/glyph/axion-vision', () => {
-  setAxionAuthResolver(() => 'resolver-supplied-token');
+test('createClient prefers the registered Sennoric auth resolver for fresco/glyph', () => {
+  setSennoricAuthResolver(() => 'resolver-supplied-token');
   try {
     assert.equal(createClient('fresco').client.apiKey, 'resolver-supplied-token');
     assert.equal(createClient('glyph').client.apiKey, 'resolver-supplied-token');
-    assert.equal(createClient('axion-vision').client.apiKey, 'resolver-supplied-token');
   } finally {
-    setAxionAuthResolver(null);
+    setSennoricAuthResolver(null);
   }
 });
 
@@ -104,9 +108,9 @@ test('a resolver returning a falsy value behaves identically to no resolver regi
   };
   const baseline = attempt();
 
-  setAxionAuthResolver(() => null);
+  setSennoricAuthResolver(() => null);
   const withFalsyResolver = attempt();
-  setAxionAuthResolver(null);
+  setSennoricAuthResolver(null);
 
   if (baseline instanceof Error) {
     assert.ok(withFalsyResolver instanceof Error);
@@ -116,20 +120,20 @@ test('a resolver returning a falsy value behaves identically to no resolver regi
   }
 });
 
-test('setAxionAuthResolver ignores a non-function argument instead of throwing', () => {
-  assert.doesNotThrow(() => setAxionAuthResolver('not-a-function'));
-  assert.doesNotThrow(() => setAxionAuthResolver(undefined));
-  setAxionAuthResolver(null);
+test('setSennoricAuthResolver ignores a non-function argument instead of throwing', () => {
+  assert.doesNotThrow(() => setSennoricAuthResolver('not-a-function'));
+  assert.doesNotThrow(() => setSennoricAuthResolver(undefined));
+  setSennoricAuthResolver(null);
 });
 
 test('a custom endpoint uses its own key and never sees the Sennoric resolver value', () => {
-  setAxionAuthResolver(() => 'should-never-leak-here');
+  setSennoricAuthResolver(() => 'should-never-leak-here');
   CUSTOM_ENDPOINTS['leaktest'] = { baseURL: 'http://localhost:9999/v1', apiKey: 'ep-key', model: 'x' };
   try {
     const result = createClient('leaktest');
     assert.equal(result.client.apiKey, 'ep-key');
   } finally {
     delete CUSTOM_ENDPOINTS['leaktest'];
-    setAxionAuthResolver(null);
+    setSennoricAuthResolver(null);
   }
 });

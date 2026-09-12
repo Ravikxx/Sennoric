@@ -4,7 +4,7 @@ const require = createRequire(import.meta.url);
 
 function localPkg() {
   try { return require('../../package.json'); }
-  catch { return { name: 'axion-cli', version: '0.0.0' }; }
+  catch { return { name: 'sennoric-cli', version: '0.0.0' }; }
 }
 
 function cmpVer(a, b) {
@@ -22,7 +22,7 @@ function cmpVer(a, b) {
 // their slash percent-encoded for the registry's single-package GET route.
 export async function checkForUpdate() {
   const pkg = localPkg();
-  const name = pkg.name || 'axion-cli';
+  const name = pkg.name || 'sennoric-cli';
   const current = pkg.version || '0.0.0';
   const result = { name, current, latest: null, updateAvailable: false };
   try {

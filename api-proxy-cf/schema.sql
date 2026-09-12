@@ -40,3 +40,10 @@ CREATE TABLE IF NOT EXISTS client_errors (
 
 CREATE INDEX IF NOT EXISTS idx_client_errors_created ON client_errors (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_client_errors_user ON client_errors (user_id, created_at DESC);
+
+-- Distinct client IPs that have made a model-generation request inside the
+-- current rolling window; backs the overload guard in src/index.js.
+CREATE TABLE IF NOT EXISTS model_gen_ip_load (
+  ip            TEXT PRIMARY KEY,
+  window_start  INTEGER NOT NULL
+);

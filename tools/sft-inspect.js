@@ -3,7 +3,7 @@
  * sft-inspect — inspect and validate a generated SFT dataset
  *
  * Usage:
- *   node tools/sft-inspect.js ~/.axion/lumen-sft/dataset.jsonl
+ *   node tools/sft-inspect.js ~/.sennoric/fresco-sft/dataset.jsonl
  *   node tools/sft-inspect.js dataset.jsonl --sample 5
  *   node tools/sft-inspect.js dataset.jsonl --filter python
  */

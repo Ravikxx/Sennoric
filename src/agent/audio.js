@@ -9,7 +9,7 @@ import { getSavedAudioModel } from '../persist.js';
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 
 // Load any saved audio model so /audio-model <model> persists across restarts.
-if (!process.env.AXION_AUDIO_MODEL) {
+if (!process.env.SENNORIC_AUDIO_MODEL) {
   const saved = getSavedAudioModel();
   if (saved) AUDIO_MODEL.current = saved;
 }

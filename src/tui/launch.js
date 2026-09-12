@@ -26,12 +26,12 @@ if (has('-v', '--version')) {
 }
 if (has('-h', '--help')) {
   console.log(`
-Usage: axion [options] [prompt]
+Usage: sennoric [options] [prompt]
 
   prompt              Send a message on startup
 
 Options:
-  -m, --model <name>  Model alias (claude, fable, gpt, gemini, lumen, …)
+  -m, --model <name>  Model alias (fresco, glyph, or a saved /endpoint name)
   -M, --mode <name>   Mode: ask | plan | bypass | decide-for-me
   -c, --continue      Resume the most recent session / workspace
   -r, --resume [name] Resume a saved session (no name → interactive picker)
@@ -41,8 +41,8 @@ Options:
   -h, --help          Show this help
 
 Pipe mode:
-  echo "refactor this" | axion          Read input from stdin
-  cat file.js | axion -M bypass         Pipe file content as prompt
+  echo "refactor this" | sennoric          Read input from stdin
+  cat file.js | sennoric -M bypass         Pipe file content as prompt
 `.trim());
   process.exit(0);
 }

@@ -8,7 +8,7 @@ import { ripgrepAvailable } from '../src/services/search/ripgrepAdapter.js';
 import { fsGlob, fsGrep, fsFind, globToRegex } from '../src/services/search/fsAdapter.js';
 
 function makeFixture() {
-  const dir = mkdtempSync(join(tmpdir(), `axion-search-`));
+  const dir = mkdtempSync(join(tmpdir(), `sennoric-search-`));
   mkdirSync(join(dir, 'src', 'utils'), { recursive: true });
   mkdirSync(join(dir, 'node_modules'), { recursive: true });
   mkdirSync(join(dir, '.git'), { recursive: true });
@@ -58,7 +58,7 @@ test('searchGrep finds matches by regex and reports path+line', async () => {
 });
 
 test('fsGrep skips binary file extensions', () => {
-  const dir = mkdtempSync(join(tmpdir(), `axion-search-bin-`));
+  const dir = mkdtempSync(join(tmpdir(), `sennoric-search-bin-`));
   try {
     writeFileSync(join(dir, 'a.txt'), 'needle in text\n');
     writeFileSync(join(dir, 'b.png'), 'needle in png\n');
@@ -69,7 +69,7 @@ test('fsGrep skips binary file extensions', () => {
 });
 
 test('searchFind ranks exact basename hits above subsequence matches', () => {
-  const dir = mkdtempSync(join(tmpdir(), `axion-search-find-`));
+  const dir = mkdtempSync(join(tmpdir(), `sennoric-search-find-`));
   try {
     mkdirSync(join(dir, 'a'), { recursive: true });
     writeFileSync(join(dir, 'index.js'), '');
@@ -87,9 +87,9 @@ test('globToRegex matches ** patterns', () => {
   assert.ok(!re.test('vendor/c.js'));
 });
 
-test('AXION_SEARCH_BACKEND=fs forces the in-process adapter', async () => {
-  const prev = process.env.AXION_SEARCH_BACKEND;
-  process.env.AXION_SEARCH_BACKEND = 'fs';
+test('SENNORIC_SEARCH_BACKEND=fs forces the in-process adapter', async () => {
+  const prev = process.env.SENNORIC_SEARCH_BACKEND;
+  process.env.SENNORIC_SEARCH_BACKEND = 'fs';
   try {
     const dir = makeFixture();
     try {
@@ -97,7 +97,7 @@ test('AXION_SEARCH_BACKEND=fs forces the in-process adapter', async () => {
       assert.ok(out.includes('src/index.js'));
     } finally { rmSync(dir, { recursive: true, force: true }); }
   } finally {
-    if (prev === undefined) delete process.env.AXION_SEARCH_BACKEND;
-    else process.env.AXION_SEARCH_BACKEND = prev;
+    if (prev === undefined) delete process.env.SENNORIC_SEARCH_BACKEND;
+    else process.env.SENNORIC_SEARCH_BACKEND = prev;
   }
 });

@@ -1,6 +1,6 @@
 // Sennoric PWA web server. Serves the app shell + proxies chat to providers.
 // Run: node src/web/server.js   (or PORT=3001 node src/web/server.js)
-// Auth: set AXION_WEB_TOKEN to require a Bearer token for /api/* routes.
+// Auth: set SENNORIC_WEB_TOKEN to require a Bearer token for /api/* routes.
 import { createServer } from 'http';
 import { randomBytes } from 'crypto';
 import { readFileSync, existsSync } from 'fs';
@@ -15,11 +15,11 @@ import { createExtensionImportResponse } from './extensionImport.js';
 const __dir    = dirname(fileURLToPath(import.meta.url));
 const ASSETS_DIR = join(__dir, '../assets');
 const PORT     = parseInt(process.env.PORT || '3000', 10);
-const TOKEN    = process.env.AXION_WEB_TOKEN || '';
-const EXTENSION_IMPORT_TOKEN = process.env.AXION_EXTENSION_IMPORT_TOKEN
+const TOKEN    = process.env.SENNORIC_WEB_TOKEN || '';
+const EXTENSION_IMPORT_TOKEN = process.env.SENNORIC_EXTENSION_IMPORT_TOKEN
   || randomBytes(24).toString('base64url');
 
-// Seed API keys and custom endpoints from ~/.axion/config.json
+// Seed API keys and custom endpoints from ~/.sennoric/config.json
 const savedKeys = getSavedApiKeys();
 for (const [p, k] of Object.entries(savedKeys)) {
   if (k && !API_KEYS[p]) API_KEYS[p] = k;
@@ -69,7 +69,7 @@ function checkAuth(req, res) {
   if (!TOKEN) return true;
   if ((req.headers.authorization || '') === `Bearer ${TOKEN}`) return true;
   res.writeHead(401, { 'WWW-Authenticate': 'Bearer realm="Sennoric"', 'Content-Type': 'text/plain' });
-  res.end('Unauthorized — set AXION_WEB_TOKEN and pass it as Bearer token.');
+  res.end('Unauthorized — set SENNORIC_WEB_TOKEN and pass it as Bearer token.');
   return false;
 }
 
@@ -217,8 +217,8 @@ server.listen(PORT, () => {
   const listeningPort = typeof address === 'object' && address ? address.port : PORT;
   process.stdout.write(`Sennoric PWA  →  http://localhost:${listeningPort}\n`);
   process.stdout.write(TOKEN
-    ? 'Auth: AXION_WEB_TOKEN set — include as Bearer token.\n'
-    : 'Auth: none (set AXION_WEB_TOKEN to protect LAN access).\n');
+    ? 'Auth: SENNORIC_WEB_TOKEN set — include as Bearer token.\n'
+    : 'Auth: none (set SENNORIC_WEB_TOKEN to protect LAN access).\n');
   process.stdout.write(`Extension import token: ${EXTENSION_IMPORT_TOKEN}\n`);
   process.stdout.write('Paste this token into the Chrome extension; it expires when /web stops.\n');
 });

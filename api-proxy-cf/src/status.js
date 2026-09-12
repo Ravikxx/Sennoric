@@ -1,7 +1,7 @@
 import { probeFrescoHealth } from './fresco-upstream.js'
 
 export const SERVICES = [
-  { key: 'axion_api', label: 'Sennoric API' },
+  { key: 'sennoric_api', label: 'Sennoric API' },
   { key: 'fresco', label: 'Fresco model' },
   { key: 'website', label: 'Sennoric website' },
 ]
@@ -33,10 +33,10 @@ async function checkSennoricApi(env, appFetch) {
   try {
     const res = await appFetch(new Request('https://api.sennoric.com/v1/models'))
     return res.ok
-      ? { service: 'axion_api', status: 'up', detail: '' }
-      : { service: 'axion_api', status: 'down', detail: `HTTP ${res.status}` }
+      ? { service: 'sennoric_api', status: 'up', detail: '' }
+      : { service: 'sennoric_api', status: 'down', detail: `HTTP ${res.status}` }
   } catch (err) {
-    return { service: 'axion_api', status: 'down', detail: String((err && err.message) || err) }
+    return { service: 'sennoric_api', status: 'down', detail: String((err && err.message) || err) }
   }
 }
 

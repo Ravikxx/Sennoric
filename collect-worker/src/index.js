@@ -48,7 +48,7 @@ export default {
           messages,
           meta: {
             receivedAt: new Date().toISOString(),
-            source: body.meta?.source || 'axion',
+            source: body.meta?.source || 'sennoric',
           },
         };
         const key = `session:${new Date().toISOString().replace(/[:.]/g, '-')}-${Math.random().toString(36).slice(2, 7)}`;
@@ -102,7 +102,7 @@ export default {
         headers: {
           ...CORS,
           'Content-Type': 'application/x-ndjson',
-          'Content-Disposition': 'attachment; filename="axion-dataset.ndjson"',
+          'Content-Disposition': 'attachment; filename="sennoric-dataset.ndjson"',
         },
       });
     }

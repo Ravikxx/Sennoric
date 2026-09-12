@@ -6,8 +6,8 @@ import { writeJsonAtomic } from '../tui/persistence.js';
 
 const _dir         = dirname(fileURLToPath(import.meta.url));
 const BUILTIN_DIR  = join(_dir, '../plugins');
-const USER_DIR     = join(homedir(), '.axion', 'plugins');
-const CONFIG_FILE  = join(homedir(), '.axion', 'plugin-config.json');
+const USER_DIR     = join(homedir(), '.sennoric', 'plugins');
+const CONFIG_FILE  = join(homedir(), '.sennoric', 'plugin-config.json');
 
 function loadConfig() {
   try { return JSON.parse(readFileSync(CONFIG_FILE, 'utf8')); } catch { return {}; }
@@ -70,7 +70,7 @@ class PluginManager {
       }
     }
 
-    // Load user plugins from ~/.axion/plugins/
+    // Load user plugins from ~/.sennoric/plugins/
     if (existsSync(USER_DIR)) {
       for (const file of readdirSync(USER_DIR).filter(f => f.endsWith('.js'))) {
         try {

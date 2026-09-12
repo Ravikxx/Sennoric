@@ -24,7 +24,7 @@ function errorResponse(message, status = 502) {
 // back to "fresco" in the response so the public API contract (documented
 // everywhere as model: "fresco") stays consistent end to end regardless of
 // which underlying HF repo is actually running.
-const SERVED_MODEL_NAME = 'AxionLabsAI/Lumen-1.2.5'
+const SERVED_MODEL_NAME = 'SennoricLabsAI/Fresco-1.2.5'
 
 // Baseline safety/behavior system prompt sent with every Fresco request,
 // regardless of caller (web chat, playground, API keys, CLI). Fresco's own

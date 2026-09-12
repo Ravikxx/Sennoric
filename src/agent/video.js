@@ -14,7 +14,7 @@ import { analyzeScreen } from './vision.js';
 const MAX_VIDEO_BYTES = 20 * 1024 * 1024;
 
 // Load any saved video model so /video <model> persists across restarts.
-if (!process.env.AXION_VIDEO_MODEL) {
+if (!process.env.SENNORIC_VIDEO_MODEL) {
   const saved = getSavedVideoModel();
   if (saved) VIDEO_MODEL.current = saved;
 }
@@ -32,7 +32,7 @@ export function videoMediaType(path) {
 // tier-2 (vision-model) fallback, and reusable elsewhere. Returns a PNG path
 // in the temp dir, or null if ffmpeg isn't available / the extract fails.
 export function extractFrame(videoPath, atSeconds = 1) {
-  const out = join(tmpdir(), `axion-frame-${basename(videoPath).replace(/\W+/g, '_')}-${Math.round(atSeconds)}.png`);
+  const out = join(tmpdir(), `sennoric-frame-${basename(videoPath).replace(/\W+/g, '_')}-${Math.round(atSeconds)}.png`);
   try {
     execFileSync('ffmpeg', ['-ss', String(atSeconds), '-i', videoPath, '-frames:v', '1', '-y', out],
       { stdio: ['ignore', 'ignore', 'ignore'], timeout: 20000 });

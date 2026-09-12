@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Unity MCP server — JSON-RPC 2.0 over stdio, forwards tool calls to the
-AxionBridge C# editor script running inside Unity.
+SennoricBridge C# editor script running inside Unity.
 
 Usage
 -----
   python3 unity_server.py
 
 Requires the Unity editor open on a project that contains
-`AxionBridge.cs` in an `Editor/` folder (Sennoric copies it there via /unity).
+`SennoricBridge.cs` in an `Editor/` folder (Sennoric copies it there via /unity).
 The bridge listens on localhost:9877.
 
 Environment
 -----------
-  AXION_UNITY_PORT  Bridge port (default 9877)
+  SENNORIC_UNITY_PORT  Bridge port (default 9877)
 """
 
 import sys
@@ -22,7 +22,7 @@ import socket
 import threading
 import traceback
 
-BRIDGE_PORT = int(os.environ.get('AXION_UNITY_PORT', '9877'))
+BRIDGE_PORT = int(os.environ.get('SENNORIC_UNITY_PORT', '9877'))
 
 def result_text(text):
     return {'content': [{'type': 'text', 'text': str(text)}]}
@@ -81,16 +81,16 @@ NO_BRIDGE_HELP = (
     f'Cannot reach the Unity bridge on localhost:{BRIDGE_PORT}.\n'
     'Make sure:\n'
     '  1. The Unity editor is open on your project\n'
-    '  2. AxionBridge.cs is in an Editor/ folder of that project\n'
+    '  2. SennoricBridge.cs is in an Editor/ folder of that project\n'
     '     (run /unity in Sennoric to see setup instructions)\n'
-    '  3. The Unity console shows "[AxionBridge] listening on 127.0.0.1:'
+    '  3. The Unity console shows "[SennoricBridge] listening on 127.0.0.1:'
     f'{BRIDGE_PORT}"\n'
     'Note: the bridge restarts automatically after script compilation and '
     'when entering/exiting play mode — retry once if a call fails right after either.'
 )
 
 # ── Tool registry ─────────────────────────────────────────────────────────────
-# Handlers live in the C# bridge (AxionBridge.cs); this list only describes them.
+# Handlers live in the C# bridge (SennoricBridge.cs); this list only describes them.
 
 _VEC3 = {'type': 'array', 'items': {'type': 'number'}, 'minItems': 3, 'maxItems': 3}
 
@@ -192,7 +192,7 @@ def main():
                 'jsonrpc': '2.0', 'id': msg_id, 'result': {
                     'protocolVersion': '2024-11-05',
                     'capabilities': {'tools': {}},
-                    'serverInfo': {'name': 'axion-unity', 'version': '1.0.0'},
+                    'serverInfo': {'name': 'sennoric-unity', 'version': '1.0.0'},
                 },
             })
 

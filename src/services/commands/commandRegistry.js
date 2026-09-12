@@ -2,8 +2,8 @@ import { getCustomCommands } from '../../persist.js';
 
 /**
  * Custom command registry — loads user-defined slash commands from:
- *   1. ~/.axion/commands/*.md  (global)
- *   2. .axion/commands/*.md    (project, trusted dirs only)
+ *   1. ~/.sennoric/commands/*.md  (global)
+ *   2. .sennoric/commands/*.md    (project, trusted dirs only)
  *
  * Each .md file:
  *   - filename (minus .md) = command name

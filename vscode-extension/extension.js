@@ -1,11 +1,11 @@
 const vscode = require('vscode');
 
 function getPort() {
-  return vscode.workspace.getConfiguration('axion').get('port', 3000);
+  return vscode.workspace.getConfiguration('sennoric').get('port', 3000);
 }
 
-class AxionViewProvider {
-  static viewType = 'axion.chat';
+class SennoricViewProvider {
+  static viewType = 'sennoric.chat';
 
   constructor(extensionUri) {
     this._extensionUri = extensionUri;
@@ -319,7 +319,7 @@ class AxionViewProvider {
 </div>
 
 <div class="disconnected-banner" id="disconnected-banner">
-  Start the server: <code>axion --web</code> or <code>axion /web</code> in the terminal.
+  Start the server: <code>sennoric --web</code> or <code>sennoric /web</code> in the terminal.
 </div>
 
 <div class="messages" id="messages">
@@ -611,31 +611,31 @@ function getNonce() {
 }
 
 function activate(context) {
-  const provider = new AxionViewProvider(context.extensionUri);
+  const provider = new SennoricViewProvider(context.extensionUri);
 
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(AxionViewProvider.viewType, provider, {
+    vscode.window.registerWebviewViewProvider(SennoricViewProvider.viewType, provider, {
       webviewOptions: { retainContextWhenHidden: true },
     })
   );
 
   // Open sidebar
   context.subscriptions.push(
-    vscode.commands.registerCommand('axion.open', () => {
-      vscode.commands.executeCommand('axion.chat.focus');
+    vscode.commands.registerCommand('sennoric.open', () => {
+      vscode.commands.executeCommand('sennoric.chat.focus');
     })
   );
 
   // New chat
   context.subscriptions.push(
-    vscode.commands.registerCommand('axion.newChat', () => {
+    vscode.commands.registerCommand('sennoric.newChat', () => {
       provider.postMessage({ type: 'new_chat' });
     })
   );
 
   // Send selected text to Sennoric
   context.subscriptions.push(
-    vscode.commands.registerCommand('axion.sendSelection', () => {
+    vscode.commands.registerCommand('sennoric.sendSelection', () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
 
@@ -650,13 +650,13 @@ function activate(context) {
       const inject = `\`\`\`${lang} (${relativePath})\n${selection}\n\`\`\`\n\n`;
 
       provider.postMessage({ type: 'inject', content: inject });
-      vscode.commands.executeCommand('axion.chat.focus');
+      vscode.commands.executeCommand('sennoric.chat.focus');
     })
   );
 
   // Add entire file to Sennoric context
   context.subscriptions.push(
-    vscode.commands.registerCommand('axion.addFile', () => {
+    vscode.commands.registerCommand('sennoric.addFile', () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
 
@@ -666,14 +666,14 @@ function activate(context) {
       const inject = `\`\`\`${lang} (${relativePath})\n${content}\n\`\`\`\n\n`;
 
       provider.postMessage({ type: 'inject', content: inject });
-      vscode.commands.executeCommand('axion.chat.focus');
+      vscode.commands.executeCommand('sennoric.chat.focus');
     })
   );
 
   // Re-connect when port setting changes
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration('axion.port')) {
+      if (e.affectsConfiguration('sennoric.port')) {
         provider.refresh();
       }
     })

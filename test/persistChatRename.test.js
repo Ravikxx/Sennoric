@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { saveChat, loadChat, renameChat, deleteChat } from '../src/persist.js';
 
 // persist.js's chat CRUD (saveChat/loadChat/deleteChat) has no existing test
-// coverage — it reads/writes the real ~/.axion directory with no injection
+// coverage — it reads/writes the real ~/.sennoric directory with no injection
 // point for a temp dir. This test follows suit but is careful to use a
 // name no real session would ever have and to always clean up after itself,
 // even on failure.

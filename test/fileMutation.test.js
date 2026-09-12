@@ -8,7 +8,7 @@ import {
 } from '../src/services/files/fileMutation.js';
 
 function withTempDir(fn) {
-  const dir = mkdtempSync(join(tmpdir(), 'axion-file-mutation-'));
+  const dir = mkdtempSync(join(tmpdir(), 'sennoric-file-mutation-'));
   return Promise.resolve(fn(dir)).finally(() => rmSync(dir, { recursive: true, force: true }));
 }
 

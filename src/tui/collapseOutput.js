@@ -3,8 +3,8 @@
 // Provides line-first truncation: first caps by line count, then by character
 // count within those lines. Appends an overflow indicator when truncated.
 
-const DEFAULT_MAX_LINES = parseInt(process.env.AXION_TOOL_OUTPUT_MAX_LINES || '80', 10);
-const DEFAULT_MAX_BYTES = parseInt(process.env.AXION_TOOL_OUTPUT_MAX_BYTES || '16000', 10);
+const DEFAULT_MAX_LINES = parseInt(process.env.SENNORIC_TOOL_OUTPUT_MAX_LINES || '80', 10);
+const DEFAULT_MAX_BYTES = parseInt(process.env.SENNORIC_TOOL_OUTPUT_MAX_BYTES || '16000', 10);
 
 /**
  * Collapse tool output to fit within configured limits.

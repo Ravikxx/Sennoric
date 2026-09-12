@@ -1,10 +1,10 @@
 // Glyph runs on its own RunPod Serverless endpoint behind vLLM's OpenAI-compatible
-// server, same setup as Fresco (see lumen-upstream.js) but a separate endpoint ID
+// server, same setup as Fresco (see fresco-upstream.js) but a separate endpoint ID
 // and a much smaller/cheaper GPU tier, since Glyph is a 3B GGUF model rather than
 // Fresco's 8B. Shares the same RUNPOD_API_KEY (one RunPod account, two endpoints).
 
 function runpodBaseUrl(env) {
-  return `https://api.runpod.ai/v2/${env.RUNPOD_VEIL_ENDPOINT_ID}/openai/v1`
+  return `https://api.runpod.ai/v2/${env.RUNPOD_GLYPH_ENDPOINT_ID}/openai/v1`
 }
 
 function errorResponse(message, status = 502) {
@@ -17,7 +17,7 @@ function errorResponse(message, status = 502) {
 // The model name vLLM was actually launched with (RunPod's GGUF auto-loader
 // syntax: "repo:quant_type"). Rewritten back to "glyph" in the response so the
 // public API contract stays consistent regardless of the underlying HF repo.
-const SERVED_MODEL_NAME = 'AxionLabsAI/Veil-1.1:Q4_K_M'
+const SERVED_MODEL_NAME = 'SennoricLabsAI/Glyph-1.1:Q4_K_M'
 
 export async function proxyGlyphRequest(body, env, fetchImpl = fetch) {
   const requestBody = { ...body, model: SERVED_MODEL_NAME }
@@ -74,7 +74,7 @@ export async function proxyGlyphRequest(body, env, fetchImpl = fetch) {
 // API is reachable, not that a worker happens to be warm right now.
 export async function probeGlyphHealth(env, fetchImpl = fetch, timeoutMs = 6000) {
   try {
-    const response = await fetchImpl(`https://api.runpod.ai/v2/${env.RUNPOD_VEIL_ENDPOINT_ID}/health`, {
+    const response = await fetchImpl(`https://api.runpod.ai/v2/${env.RUNPOD_GLYPH_ENDPOINT_ID}/health`, {
       headers: { Authorization: `Bearer ${env.RUNPOD_API_KEY}` },
       signal: AbortSignal.timeout(timeoutMs),
     })
@@ -86,5 +86,5 @@ export async function probeGlyphHealth(env, fetchImpl = fetch, timeoutMs = 6000)
 
 export const GLYPH_UPSTREAM_URLS = {
   chat: (env) => `${runpodBaseUrl(env)}/chat/completions`,
-  health: (env) => `https://api.runpod.ai/v2/${env.RUNPOD_VEIL_ENDPOINT_ID}/health`,
+  health: (env) => `https://api.runpod.ai/v2/${env.RUNPOD_GLYPH_ENDPOINT_ID}/health`,
 }

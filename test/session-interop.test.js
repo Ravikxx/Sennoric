@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { BUS } from '../src/agent/bus.js';
 import {
   registerSession, updateSession, unregisterSession, listSessions, getSession,
+  listAllSessions, setSessionListener,
 } from '../src/agent/sessionRegistry.js';
 import { executeTool } from '../src/agent/tools.js';
 
@@ -15,10 +16,21 @@ test('registerSession notifies peer mailboxes of creation', () => {
   const b = uid('peer');
   registerSession(a, { model: 'fresco' });
   registerSession(b, { model: 'glyph', goal: 'Refactor auth' });
-  // b was created after a -> a should have a creation notice in its mailbox.
-  const notices = BUS.read(a).map((n) => n.content);
+  // b was created after a -> a should have a creation notice.
+  const notices = BUS.readNotices(a).map((n) => n.content);
   assert.ok(notices.some((n) => n.includes(`New session "${b}"`) && n.includes('Refactor auth')),
     `expected creation notice for ${b}, got: ${JSON.stringify(notices)}`);
+});
+
+test('main agent sees creation notices via read_messages (the previously-missed path)', async () => {
+  const a = uid('main');
+  const b = uid('peer');
+  registerSession(a, { model: 'fresco' });
+  registerSession(b, { model: 'glyph', goal: 'Write tests' });
+  const res = await executeTool('read_messages', {}, { agentLabel: a });
+  assert.equal(res.success, true);
+  assert.ok(res.output.includes(`New session "${b}"`) && res.output.includes('Write tests'),
+    `main should see ${b}'s creation notice: ${res.output}`);
 });
 
 test('listSessions excludes the caller and exposes peer goal/status', () => {
@@ -73,4 +85,23 @@ test('updateSession refreshes status; unregister removes it', () => {
   assert.equal(getSession(b).status, 'working');
   unregisterSession(b);
   assert.equal(getSession(b), null);
+});
+
+test('listAllSessions includes the caller (human-facing /peers view)', () => {
+  const a = uid('main');
+  const b = uid('peer');
+  registerSession(a, { model: 'fresco' });
+  registerSession(b, { model: 'glyph', goal: 'X' });
+  const all = listAllSessions();
+  const labels = all.map((s) => s.label);
+  assert.ok(labels.includes(a) && labels.includes(b), `expected both sessions, got ${JSON.stringify(labels)}`);
+});
+
+test('setSessionListener fires on session creation (operator notice)', () => {
+  const seen = [];
+  setSessionListener((entry) => seen.push(entry.label));
+  const b = uid('peer');
+  registerSession(b, { model: 'glyph' });
+  assert.ok(seen.includes(b), `listener should have seen ${b}, got ${JSON.stringify(seen)}`);
+  setSessionListener(null);
 });

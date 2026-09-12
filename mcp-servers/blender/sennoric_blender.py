@@ -269,7 +269,7 @@ def _render(p):
     scene.render.image_settings.file_format = fmt
 
     out = p.get("output_path") or os.path.join(
-        tempfile.gettempdir(), f"axion_render.{fmt.lower()}")
+        tempfile.gettempdir(), f"sennoric_render.{fmt.lower()}")
     scene.render.filepath = out
 
     if res := p.get("resolution"):
@@ -282,7 +282,7 @@ def _render(p):
 
 def _get_viewport_screenshot(p):
     import os, tempfile
-    out = p.get("output_path") or os.path.join(tempfile.gettempdir(), "axion_viewport.png")
+    out = p.get("output_path") or os.path.join(tempfile.gettempdir(), "sennoric_viewport.png")
     # Find a 3D viewport area
     for area in bpy.context.screen.areas:
         if area.type == "VIEW_3D":
@@ -342,7 +342,7 @@ def _execute_python(p):
     code = p.get("code", "")
     if not code: raise ValueError("'code' required")
     ns = {"bpy": bpy, "result": None, "__builtins__": __builtins__}
-    exec(compile(code, "<axion>", "exec"), ns)
+    exec(compile(code, "<sennoric>", "exec"), ns)
     return {"executed": True, "result": str(ns.get("result", ""))}
 
 

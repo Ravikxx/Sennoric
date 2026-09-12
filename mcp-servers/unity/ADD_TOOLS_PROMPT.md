@@ -1,10 +1,10 @@
 # Unity MCP server — available tools
 
-The Unity MCP server controls the Unity editor through AxionBridge.cs, a C#
+The Unity MCP server controls the Unity editor through SennoricBridge.cs, a C#
 editor script that listens on `127.0.0.1:9877` (override with the
-`AXION_UNITY_PORT` env var, set before launching Unity). Every `tools/call`
+`SENNORIC_UNITY_PORT` env var, set before launching Unity). Every `tools/call`
 requires the Unity editor to be open with the bridge compiled — the bridge
-prints `[AxionBridge] listening on 127.0.0.1:9877` in the Unity console when
+prints `[SennoricBridge] listening on 127.0.0.1:9877` in the Unity console when
 ready. `/unity` copies the bridge into `Assets/Editor/` automatically when run
 from a Unity project directory.
 
@@ -36,7 +36,7 @@ from a Unity project directory.
 
 Two files must stay in sync:
 
-1. `mcp-servers/unity/AxionBridge.cs` — add a `case "unity_<name>":` to the
+1. `mcp-servers/unity/SennoricBridge.cs` — add a `case "unity_<name>":` to the
    switch in `Execute()` and implement the handler as a static method. Unity
    API calls are already on the main thread there. Return a string (JSON via
    `MiniJson.Serialize` for structured data); throw exceptions for errors.

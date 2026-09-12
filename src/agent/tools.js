@@ -14,7 +14,7 @@ import { captureScreen, captureScreenAnnotated, uiaClickElement, mouseClick, typ
 import { analyzeScreen, parseCoordinates } from './vision.js';
 import { executeGoogleTool, GOOGLE_TOOL_DEFINITIONS, GOOGLE_TOOL_DEFINITIONS_OPENAI } from './google.js';
 import { getOAuthToken } from '../oauth/oauth.js';
-import { resolveAxionAuth } from './models.js';
+import { resolveSennoricAuth } from './models.js';
 import {
   goToDefinition, findReferences, hover, documentSymbol, workspaceSymbol, callHierarchy,
 } from '../services/lsp/manager.js';
@@ -1610,7 +1610,7 @@ export async function executeTool(name, input, {
       }
 
       case 'create_cloud_artifact': {
-        const token = resolveAxionAuth();
+        const token = resolveSennoricAuth();
         if (!token) {
           return { success: false, output: 'Not signed in to Sennoric — ask the user to sign in first, then try again.' };
         }
@@ -1646,7 +1646,7 @@ export async function executeTool(name, input, {
       }
 
       case 'update_cloud_artifact': {
-        const token = resolveAxionAuth();
+        const token = resolveSennoricAuth();
         if (!token) {
           return { success: false, output: 'Not signed in to Sennoric — ask the user to sign in first, then try again.' };
         }
@@ -1677,7 +1677,7 @@ export async function executeTool(name, input, {
       }
 
       case 'delete_cloud_artifact': {
-        const token = resolveAxionAuth();
+        const token = resolveSennoricAuth();
         if (!token) {
           return { success: false, output: 'Not signed in to Sennoric — ask the user to sign in first, then try again.' };
         }
@@ -2157,10 +2157,13 @@ export async function executeTool(name, input, {
         const { readUnreadMessages, markMessagesAsRead } = await import('../services/swarm/mailbox.js');
         const mailboxMsgs = readUnreadMessages(agentLabel);
         if (mailboxMsgs.length) markMessagesAsRead(agentLabel);
+        // Lifecycle notices (e.g. peer session created)
+        const notices = BUS.readNotices(agentLabel);
 
         const allMsgs = [
           ...msgs.map(m => `[${m.at}] from ${m.from}: ${m.content}`),
           ...mailboxMsgs.map(m => `[${m.timestamp}] from ${m.from}: ${m.text}`),
+          ...notices.map(n => `[${n.at}] ${n.content}`),
         ];
         if (!allMsgs.length) return { success: true, output: 'No messages.' };
         for (const m of msgs) {
@@ -2168,6 +2171,9 @@ export async function executeTool(name, input, {
         }
         for (const m of mailboxMsgs) {
           onNotify({ type: 'agent-msg', from: m.from, to: agentLabel, content: m.text });
+        }
+        for (const n of notices) {
+          onNotify({ type: 'agent-msg', from: n.from, to: agentLabel, content: n.content });
         }
         return { success: true, output: allMsgs.join('\n') };
       }
@@ -2194,6 +2200,12 @@ export async function executeTool(name, input, {
               onNotify({ type: 'agent-msg', from: m.from, to: agentLabel, content: m.text });
             }
             const text = mailboxMsgs.map((m) => `[${m.timestamp}] from ${m.from}: ${m.text}`).join('\n');
+            return { success: true, output: text };
+          }
+          // Lifecycle notices (e.g. peer session created)
+          const notices = BUS.readNotices(agentLabel);
+          if (notices.length) {
+            const text = notices.map((n) => `[${n.at}] ${n.content}`).join('\n');
             return { success: true, output: text };
           }
           await new Promise((r) => setTimeout(r, POLL_MS));

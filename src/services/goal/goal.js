@@ -74,7 +74,7 @@ export function shouldEvaluateGoal(goal, currentMessageIdx) {
 
 // ── Persistence ────────────────────────────────────────────────────────────
 
-const GOAL_DIR = join(homedir(), '.axion', 'goals');
+const GOAL_DIR = join(homedir(), '.sennoric', 'goals');
 
 function ensureGoalDir() {
   if (!existsSync(GOAL_DIR)) mkdirSync(GOAL_DIR, { recursive: true });

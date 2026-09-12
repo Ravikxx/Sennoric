@@ -1,30 +1,30 @@
 {
-  "name": "axion",
+  "name": "sennoric",
   "displayName": "Sennoric",
   "description": "AI coding agent — chat, edit files, run tools, right in VS Code",
   "version": "0.1.0",
-  "publisher": "axion-labs",
+  "publisher": "sennoric-labs",
   "icon": "icons/icon128.png",
-  "repository": { "type": "git", "url": "https://github.com/AxionLabsAI/axion" },
+  "repository": { "type": "git", "url": "https://github.com/SennoricLabsAI/sennoric" },
   "engines": { "vscode": "^1.80.0" },
   "categories": ["AI", "Chat", "Other"],
-  "keywords": ["ai", "copilot", "coding", "agent", "lumen"],
+  "keywords": ["ai", "copilot", "coding", "agent", "fresco", "fresco"],
   "activationEvents": ["onStartupFinished"],
   "main": "./extension.js",
   "contributes": {
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "axion-sidebar",
+          "id": "sennoric-sidebar",
           "title": "Sennoric",
           "icon": "icons/icon-mono.svg"
         }
       ]
     },
     "views": {
-      "axion-sidebar": [
+      "sennoric-sidebar": [
         {
-          "id": "axion.chat",
+          "id": "sennoric.chat",
           "name": "",
           "type": "webview"
         }
@@ -32,22 +32,22 @@
     },
     "commands": [
       {
-        "command": "axion.open",
+        "command": "sennoric.open",
         "title": "Open Sennoric",
         "category": "Sennoric"
       },
       {
-        "command": "axion.sendSelection",
+        "command": "sennoric.sendSelection",
         "title": "Ask Sennoric about this",
         "category": "Sennoric"
       },
       {
-        "command": "axion.addFile",
+        "command": "sennoric.addFile",
         "title": "Add file to Sennoric context",
         "category": "Sennoric"
       },
       {
-        "command": "axion.newChat",
+        "command": "sennoric.newChat",
         "title": "New Chat",
         "category": "Sennoric"
       }
@@ -55,26 +55,26 @@
     "menus": {
       "editor/context": [
         {
-          "command": "axion.sendSelection",
+          "command": "sennoric.sendSelection",
           "when": "editorHasSelection",
-          "group": "axion@1"
+          "group": "sennoric@1"
         },
         {
-          "command": "axion.addFile",
-          "group": "axion@2"
+          "command": "sennoric.addFile",
+          "group": "sennoric@2"
         }
       ],
       "view/title": [
         {
-          "command": "axion.newChat",
-          "when": "view == axion.chat",
+          "command": "sennoric.newChat",
+          "when": "view == sennoric.chat",
           "group": "navigation"
         }
       ]
     },
     "keybindings": [
       {
-        "command": "axion.sendSelection",
+        "command": "sennoric.sendSelection",
         "key": "ctrl+shift+a",
         "mac": "cmd+shift+a",
         "when": "editorHasSelection"
@@ -83,10 +83,10 @@
     "configuration": {
       "title": "Sennoric",
       "properties": {
-        "axion.port": {
+        "sennoric.port": {
           "type": "number",
           "default": 3000,
-          "description": "Port for the Sennoric web server (axion-serve / axion --web)"
+          "description": "Port for the Sennoric web server (sennoric-serve / sennoric --web)"
         }
       }
     }

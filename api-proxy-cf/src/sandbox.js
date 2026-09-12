@@ -155,41 +155,41 @@ async function ensureOutputDir(env, sandboxId, fetchImpl) {
 // this round-trips correctly across two separate code-run calls. Only
 // picklable values survive (numbers, strings, lists, dicts, etc.); anything
 // else (open files, modules, most objects) is silently dropped, and a
-// module-scope name starting with "__axion_" would collide with the
+// module-scope name starting with "__sennoric_" would collide with the
 // plumbing's own vars, though that's an unlikely name for real code to use.
 // JavaScript doesn't get this: top-level `let`/`var` in a Node script isn't
 // reachable off any single inspectable object the way Python's globals()
 // is, so there's no equivalent hook without asking the model to explicitly
 // write to `global.x` — not attempted here.
-const PY_STATE_PATH = '/home/daytona/.axion_state.pkl'
-const PY_STATE_PRESERVE = ['__axion_pickle', '__axion_os', '__axion_state_path', '__axion_f', '__axion_skip', '__axion_state', '__axion_k', '__axion_v']
+const PY_STATE_PATH = '/home/daytona/.sennoric_state.pkl'
+const PY_STATE_PRESERVE = ['__sennoric_pickle', '__sennoric_os', '__sennoric_state_path', '__sennoric_f', '__sennoric_skip', '__sennoric_state', '__sennoric_k', '__sennoric_v']
 
 function wrapPythonForState(code) {
   const preamble = [
-    'import pickle as __axion_pickle',
-    'import os as __axion_os',
-    `__axion_state_path = ${JSON.stringify(PY_STATE_PATH)}`,
-    'if __axion_os.path.exists(__axion_state_path):',
+    'import pickle as __sennoric_pickle',
+    'import os as __sennoric_os',
+    `__sennoric_state_path = ${JSON.stringify(PY_STATE_PATH)}`,
+    'if __sennoric_os.path.exists(__sennoric_state_path):',
     '    try:',
-    '        with open(__axion_state_path, "rb") as __axion_f:',
-    '            globals().update(__axion_pickle.load(__axion_f))',
+    '        with open(__sennoric_state_path, "rb") as __sennoric_f:',
+    '            globals().update(__sennoric_pickle.load(__sennoric_f))',
     '    except Exception:',
     '        pass',
   ].join('\n')
   const coda = [
     'try:',
-    `    __axion_skip = set(${JSON.stringify(PY_STATE_PRESERVE)})`,
-    '    __axion_state = {}',
-    '    for __axion_k, __axion_v in list(globals().items()):',
-    '        if __axion_k.startswith("__") or __axion_k in __axion_skip:',
+    `    __sennoric_skip = set(${JSON.stringify(PY_STATE_PRESERVE)})`,
+    '    __sennoric_state = {}',
+    '    for __sennoric_k, __sennoric_v in list(globals().items()):',
+    '        if __sennoric_k.startswith("__") or __sennoric_k in __sennoric_skip:',
     '            continue',
     '        try:',
-    '            __axion_pickle.dumps(__axion_v)',
-    '            __axion_state[__axion_k] = __axion_v',
+    '            __sennoric_pickle.dumps(__sennoric_v)',
+    '            __sennoric_state[__sennoric_k] = __sennoric_v',
     '        except Exception:',
     '            continue',
-    '    with open(__axion_state_path, "wb") as __axion_f:',
-    '        __axion_pickle.dump(__axion_state, __axion_f)',
+    '    with open(__sennoric_state_path, "wb") as __sennoric_f:',
+    '        __sennoric_pickle.dump(__sennoric_state, __sennoric_f)',
     'except Exception:',
     '    pass',
   ].join('\n')

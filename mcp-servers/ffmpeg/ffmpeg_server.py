@@ -458,7 +458,7 @@ def main():
             send({'jsonrpc': '2.0', 'id': msg_id, 'result': {
                 'protocolVersion': '2024-11-05',
                 'capabilities': {'tools': {}},
-                'serverInfo': {'name': 'axion-ffmpeg', 'version': '1.0.0'},
+                'serverInfo': {'name': 'sennoric-ffmpeg', 'version': '1.0.0'},
             }})
         elif method == 'notifications/initialized':
             pass

@@ -3,8 +3,8 @@ import { homedir } from 'os';
 import { existsSync, mkdirSync } from 'fs';
 import { isTrustedDirectory } from '../../persist.js';
 
-const GLOBAL_WIKI_ROOT = join(homedir(), '.axion', 'wiki');
-const LOCAL_WIKI_DIR   = '.axion';
+const GLOBAL_WIKI_ROOT = join(homedir(), '.sennoric', 'wiki');
+const LOCAL_WIKI_DIR   = '.sennoric';
 
 export function getWikiRoot(projectPath) {
   if (projectPath && isTrustedDirectory(projectPath)) {

@@ -17,11 +17,32 @@ infrastructure rather than a parallel channel.
   dev command (absent from `COMMANDS`, so it never tab-completes).
 
 ## Known gap
-- The user-facing `main` agent does not see creation notices via `read_messages`
-  (BUS routes `to:"main"` to an internal inbox that `read_messages` doesn't read;
-  `main` can still call `list_sessions` to discover peers). Spawned sub-agents
-  *are* notified correctly. Fixing `main` would require changing `read_messages`
-  and risks colliding with the spawn flow's own `readMain()` consumption.
+- None outstanding. The `main` creation-notice gap was closed by adding a
+  dedicated `BUS.notifyCreation` / `BUS.readNotices` channel (separate from both
+  the per-label mailbox and `_mainInbox`), so `read_messages` / `wait_for_message`
+  surface peer-creation notices for `main` without disturbing the spawn/todo/
+  watcher flows that rely on `readMain()`.
+
+## Additional features shipped (same wave)
+- **Desktop (Sennoric App) inter-session** — implemented by subagent. New
+  `src/main/sessionRegistry.ts` (peer registry), seeded from saved chats,
+  updated on new-session/load/switch/delete; broadcasts a `peers` event +
+  creation/"switched" toasts to all windows; a "Peer sessions" panel in the
+  Code sidebar lists live peers (status, goal, model, touched files); `listPeers`
+  IPC handler. `npm run typecheck` passes (runtime not exercised).
+- **CLI `/peers` command** — human-facing list of live sessions (model, status,
+  goal, touched-file count). Distinct from `/sessions` (saved chats). Tab-completes.
+- **Operator creation notice** — `setSessionListener` in `sessionRegistry.js`;
+  the TUI registers it so spawning a code-chat/agent prints an info line for the
+  human operator (skips the operator's own `main` session).
+
+## Files touched (final)
+- CLI: `src/agent/sessionRegistry.js`, `src/agent/agent.js`, `src/agent/tools.js`,
+  `src/agent/bus.js`, `src/tui/App.jsx`, `src/ui/commands.js` (NOT modified for the
+  hidden `/create-external-model`, which stays out of tab-completion).
+- Desktop: `src/main/sessionRegistry.ts`, `src/main/index.ts`, `src/shared/ipc.ts`,
+  `src/preload/index.ts`, `src/renderer/src/useSennoric.ts`, `src/renderer/src/App.tsx`,
+  `styles.css`.
 
 ## Original design notes (kept for reference)
 
@@ -103,7 +124,7 @@ Validation: `url` must start with `http(s)://`. Gated as developer-only
 (undocumented; always available but absent from `COMMANDS`, so no tab-complete).
 
 ## Open questions to resolve before implementing
-- **Scope**: CLI sessions only, or also the desktop "code chats" (Axion App
+- **Scope**: CLI sessions only, or also the desktop "code chats" (Sennoric App
   Code tab)? Tools/slash-commands here are CLI-only.
 - **Session definition**: a whole chat, or a spawned sub-agent? Affects where
   `register()` is hooked.

@@ -6,7 +6,7 @@
 //
 // Agents come from two sources, merged by id (config overrides built-ins):
 //   1. Built-in defaults: build, debug, review, ask
-//   2. User config: AGENTS map in src/config.js (overridable via AXION_AGENTS env)
+//   2. User config: AGENTS map in src/config.js (overridable via SENNORIC_AGENTS env)
 //
 // The registry is a pure, stateless resolver — storage lives in config + the
 // caller (App.jsx / agent.js) holds the selected id for the session.

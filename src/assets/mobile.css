@@ -131,7 +131,7 @@
   footer { padding: 24px 16px !important; text-align: center !important; }
   footer .footer-links { flex-direction: column !important; gap: 12px !important; }
 
-  /* Lumen pages */
+  /* Fresco pages */
   .info-grid { grid-template-columns: 1fr !important; }
   .runs-grid { grid-template-columns: 1fr !important; }
   .scenario { padding: 16px !important; }

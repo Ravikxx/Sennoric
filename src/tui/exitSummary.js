@@ -29,6 +29,6 @@ export function sessionSummary({ model, mode, msgCount = 0, tokens = 0, cost = 0
     `  Tokens    ${fmtTokens(tokens)}`,
   ];
   if (cost > 0) rows.push(`  Cost      $${cost.toFixed(4)}`);
-  const resume = sesId ? `\n\n  Continue  \x1b[1maxion -r ${sesId}\x1b[0m` : '';
+  const resume = sesId ? `\n\n  Continue  \x1b[1msennoric -r ${sesId}\x1b[0m` : '';
   return `\n${art}\n\n${rows.join('\n')}${resume}\n`;
 }

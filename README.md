@@ -26,7 +26,6 @@ The deployed public website is maintained separately in
 | **Discord Bot** | Chat with the agent via Discord DMs (`/discord start`) |
 | **Dataset Collection** | Contribute sessions to improve future models (`/contribute`) |
 | **Plugins** | Extend the agent with browser, Docker, GitHub, and database tools (`/plugin`) |
-| **Sennoric Vision** | Free image understanding & OCR endpoint — read text in screenshots, analyse images |
 
 ---
 
@@ -44,20 +43,20 @@ curl -fsSL https://sennoric.com/install.sh | sh
 Or directly via npm:
 
 ```bash
-npm install -g @axion-labs-ai/quark-cli
+npm install -g @sennoric-labs-ai/solan-cli
 ```
 
 Or via Homebrew:
 
 ```bash
-brew tap ravikxx/axion
-brew install axion
+brew tap ravikxx/sennoric
+brew install sennoric
 ```
 
 Then run:
 
 ```bash
-axion
+sennoric
 ```
 
 That's it. No cloning, no building — just install and run.
@@ -65,15 +64,15 @@ That's it. No cloning, no building — just install and run.
 ### Install from source
 
 ```bash
-git clone https://github.com/AxionLabsAI/axion.git
-cd axion
+git clone https://github.com/SennoricLabsAI/sennoric.git
+cd sennoric
 npm install
 npm link        # the CLI runs from source — no build step
 ```
 
 ### First run
 
-Run `axion`, then set your API key inside the chat:
+Run `sennoric`, then set your API key inside the chat:
 
 ```
 /api claude YOUR_ANTHROPIC_KEY
@@ -122,9 +121,9 @@ export GEMINI_API_KEY=...
 export GROQ_API_KEY=gsk_...
 export MISTRAL_API_KEY=...
 
-# Option 2 — .env file (place in ~/.axion/.env or your project root)
+# Option 2 — .env file (place in ~/.sennoric/.env or your project root)
 # Copy .env.example to get started
-cp .env.example ~/.axion/.env
+cp .env.example ~/.sennoric/.env
 ```
 
 Or set them live inside the CLI:
@@ -141,8 +140,8 @@ Or set them live inside the CLI:
 
 | Alias | Provider | Notes |
 |---|---|---|
-| `lumen` | Sennoric Labs | Lumen 1.2.5 — live. Safety-retrained 1.3 in progress; see [safety report](https://axionlabs.dev/lumen-suspension). |
-| `veil` | Sennoric Labs | No key required — free but slow (up to 100s) |
+| `fresco` | Sennoric Labs | Fresco 1.2.5 — live. Safety-retrained 1.3 in progress; see [safety report](https://sennoriclabs.dev/fresco-suspension). |
+| `glyph` | Sennoric Labs | No key required — free but slow (up to 100s) |
 | `openrouter` / `or` | OpenRouter | 200+ models via one key |
 | `fable` | Anthropic | claude-fable-5 |
 | `claude` | Anthropic | claude-sonnet-4-6 |
@@ -160,7 +159,7 @@ Or set them live inside the CLI:
 Switch models anytime:
 
 ```
-/model veil
+/model glyph
 /model claude
 /model gpt
 /model gemini-2.5-pro
@@ -262,15 +261,15 @@ Switch with `/mode auto` or press `Ctrl+P` to cycle.
 /macro delete <name>               delete a saved macro
 
 # Image generation
-/img-gen <prompt>                  generate an image (saved to ~/.axion/images/)
+/img-gen <prompt>                  generate an image (saved to ~/.sennoric/images/)
 /img-gen-model [model]             set/show image model (dall-e-3, dall-e-2, gpt-image-1)
 
 # Skills & automation
 /skills                            list skills (auto-activate when trigger words appear)
-/skill-generator <name> <txt>      AI-generates a skill .md in ~/.axion/skills/
+/skill-generator <name> <txt>      AI-generates a skill .md in ~/.sennoric/skills/
 /skill-delete <name>               delete a skill
 /watch                             start watch-and-learn (saves preferences from your messages)
-/watch stop                        stop + save learned preferences to ~/.axion/learned.md
+/watch stop                        stop + save learned preferences to ~/.sennoric/learned.md
 /watch show                        view current learned preferences
 /watch clear                       delete all learned preferences
 /permissions [clear]               list/reset always-allowed tools (press "a" on confirms)
@@ -335,11 +334,11 @@ Switch with `/mode auto` or press `Ctrl+P` to cycle.
 
 ## Project memory & customization
 
-- **AXION.md** — put persistent project instructions in `./AXION.md`, `./.axion/AXION.md`, or `~/.axion/AXION.md`; they're loaded into every session's system prompt.
+- **SENNORIC.md** — put persistent project instructions in `./SENNORIC.md`, `./.sennoric/SENNORIC.md`, or `~/.sennoric/SENNORIC.md`; they're loaded into every session's system prompt.
 - **@file mentions** — type `@src/file.js` in any message to pin that file into context (tab-completes paths).
-- **Custom slash commands** — drop `.md` files in `~/.axion/commands/` or `./.axion/commands/`; `review-pr.md` becomes `/review-pr`, and `$ARGUMENTS` in the body is replaced with whatever follows the command.
-- **Skills** — `/skill-generator minecraft remember X, Y, Z whenever minecraft comes up` has the AI write `~/.axion/skills/minecraft.md` (frontmatter: name, description, triggers). The skill auto-injects into the system prompt whenever a trigger word appears in your message. `/skills` lists them, `/skill-delete <name>` removes one, or edit the `.md` directly.
-- **Per-project settings** — drop a `.axion-settings.json` in your project root to override global defaults for that project: `{ "model": "claude", "mode": "auto", "theme": "ocean", "systemPrompt": "...", "thinking": true }`. Takes priority over `.axionrc`.
+- **Custom slash commands** — drop `.md` files in `~/.sennoric/commands/` or `./.sennoric/commands/`; `review-pr.md` becomes `/review-pr`, and `$ARGUMENTS` in the body is replaced with whatever follows the command.
+- **Skills** — `/skill-generator minecraft remember X, Y, Z whenever minecraft comes up` has the AI write `~/.sennoric/skills/minecraft.md` (frontmatter: name, description, triggers). The skill auto-injects into the system prompt whenever a trigger word appears in your message. `/skills` lists them, `/skill-delete <name>` removes one, or edit the `.md` directly.
+- **Per-project settings** — drop a `.sennoric-settings.json` in your project root to override global defaults for that project: `{ "model": "claude", "mode": "auto", "theme": "ocean", "systemPrompt": "...", "thinking": true }`. Takes priority over `.sennoricrc`.
 - **Message queueing** — type while the agent is working; messages queue and send when the turn finishes.
 - **Background tasks** — the agent can start dev servers/watchers with `run_command background=true` and poll them with `check_task`.
 
@@ -353,7 +352,7 @@ Switch with `/mode auto` or press `Ctrl+P` to cycle.
 /schedule add price-check    "every 30m" Check Bitcoin price and alert if > 100k
 ```
 
-Results are saved as markdown files in `~/.axion/schedule-results/`.
+Results are saved as markdown files in `~/.sennoric/schedule-results/`.
 
 ---
 
@@ -368,7 +367,7 @@ Connect services to give the agent access to them:
 /oauth connect slack      → paste bot token
 ```
 
-To enable OAuth, register your own apps and add credentials to `~/.axion/.env`:
+To enable OAuth, register your own apps and add credentials to `~/.sennoric/.env`:
 
 ```
 SENNORIC_GITHUB_CLIENT_ID=...
@@ -391,16 +390,16 @@ Help improve future Sennoric models by sharing interesting sessions. Sennoric au
 /contribute optout    # never ask again (run with "off" to re-enable)
 ```
 
-Sessions are sent to the Sennoric Labs collector automatically — no setup needed. If you're offline, they're saved locally in `~/.axion/donations/` and uploaded the next time Sennoric starts with a connection.
+Sessions are sent to the Sennoric Labs collector automatically — no setup needed. If you're offline, they're saved locally in `~/.sennoric/donations/` and uploaded the next time Sennoric starts with a connection.
 
-### axion-collect (local daemon)
+### sennoric-collect (local daemon)
 
 Run a persistent local collector to capture sessions before they're uploaded:
 
 ```bash
-axion-collect               # saves to ~/.axion/dataset/ on port 47832
-axion-collect --port 12345  # custom port
-axion-collect --out ~/data  # custom output directory
+sennoric-collect               # saves to ~/.sennoric/dataset/ on port 47832
+sennoric-collect --port 12345  # custom port
+sennoric-collect --out ~/data  # custom output directory
 ```
 
 Sennoric checks for the daemon on startup and routes sessions to it first when running.
@@ -434,11 +433,11 @@ Chat with the Sennoric agent directly from Discord DMs.
 | `/discord status` | Show connection info |
 
 ### Standalone daemon
-`axion-discord` runs a persistent bot without the TUI — useful for a server:
+`sennoric-discord` runs a persistent bot without the TUI — useful for a server:
 
 ```bash
-axion-discord
-axion-discord --model claude
+sennoric-discord
+sennoric-discord --model claude
 ```
 
 ---
@@ -495,22 +494,24 @@ Or connect any MCP server manually:
 /mcp add blender /blender connect
 ```
 
-Config is saved to `~/.axion/mcp.json`.
+Config is saved to `~/.sennoric/mcp.json`.
 
 Available marketplace IDs: `github`, `filesystem`, `fetch`, `postgres`, `sqlite`, `notion`, `slack`, `puppeteer`, `memory`, `brave-search`, `google-maps`, `sequential-thinking`, `everything`
 
 ---
 
-## Sennoric Vision
+## Vision
 
-A free image understanding & OCR endpoint, hosted separately from Lumen.
+There is no built-in vision model — the retired `sennoric-vision` endpoint no
+longer exists. Computer use and `/ss` need any vision-capable model you already
+have configured:
 
-- Powered by **GLM-OCR** (Z.ai open-weights model, purpose-built for OCR)
-- Reads text in screenshots, error messages, UI mockups, diagrams
-- OpenAI-compatible `/v1/chat/completions` — send images as base64 `image_url` content blocks
-- No API key required
+```
+/vision fresco        # or claude, gpt, gemini — any model that accepts images
+```
 
-Deploy from `axion-vision-space/app.py` to a HuggingFace Space.
+The choice persists across restarts (`SENNORIC_VISION_MODEL` env var also works).
+Running computer-use tools with no vision model set explains this instead of failing silently.
 
 ---
 
@@ -519,7 +520,7 @@ Deploy from `axion-vision-space/app.py` to a HuggingFace Space.
 The CLI runs from source (no build step) — just relink:
 
 ```bash
-npm link            # (or: npm install -g .) — update the global `axion`
+npm link            # (or: npm install -g .) — update the global `sennoric`
 ```
 
 ---
@@ -527,21 +528,21 @@ npm link            # (or: npm install -g .) — update the global `axion`
 ## Project structure
 
 ```
-axion/
+sennoric/
 ├── src/
 │   ├── agent/          # Agent loop, tools, models, MCP, OAuth APIs
 │   ├── tui/            # Terminal UI (OpenTUI + React, runs under Bun)
-│   │   ├── launch.js   # `axion` entry — re-execs the TUI under Bun, or falls back
+│   │   ├── launch.js   # `sennoric` entry — re-execs the TUI under Bun, or falls back
 │   │   ├── main.jsx    # OpenTUI entry / arg parsing
 │   │   └── fallback.js # plain-Node readline UI (no Bun / piped input)
 │   ├── ui/             # Framework-free shared logic (markdown, charts, commands…)
 │   ├── web/            # Web server + React web client
 │   ├── oauth/          # OAuth providers + flow
 │   ├── config.js       # Models, providers, API keys
-│   ├── persist.js      # Local storage (~/.axion/)
+│   ├── persist.js      # Local storage (~/.sennoric/)
 │   ├── scheduler.js    # Scheduled tasks
-│   ├── discord-daemon.js  # axion-discord standalone bot
-│   └── collect-daemon.js  # axion-collect local dataset daemon
+│   ├── discord-daemon.js  # sennoric-discord standalone bot
+│   └── collect-daemon.js  # sennoric-collect local dataset daemon
 ├── collect-worker/     # Cloudflare Worker for remote session collection
 ├── mcp-servers/        # Bundled MCP servers (Blender)
 └── assets/             # Repository documentation assets
@@ -557,11 +558,11 @@ Type any command in the CLI. All commands start with `/`. Tab completes the comm
 
 | Command | Description |
 |---|---|
-| `/model <name>` | Switch model (e.g. `claude`, `gpt`, `lumen`, `gemini`, `groq`) |
+| `/model <name>` | Switch model (e.g. `claude`, `gpt`, `fresco`, `gemini`, `groq`) |
 | `/models` | List all available models and custom endpoints |
 | `/api <provider> <key>` | Set an API key (`claude`, `gpt`, `groq`, `mistral`, `gemini`, `glm`, `openrouter`) |
-| `/axion-key <key>` | Save your Sennoric API key for Lumen access |
-| `/axion-key remove` | Clear your Sennoric API key |
+| `/sennoric-key <key>` | Save your Sennoric API key for Fresco access |
+| `/sennoric-key remove` | Clear your Sennoric API key |
 | `/endpoint <name> <url> [model] [key]` | Add a custom OpenAI-compatible endpoint |
 | `/thinking [on\|off\|<tokens>]` | Toggle extended thinking (Claude only) |
 
@@ -657,4 +658,4 @@ Type any command in the CLI. All commands start with `/`. Tab completes the comm
 
 ## License
 
-MIT — made by [Sennoric Labs](https://github.com/AxionLabsAI)
+MIT — made by [Sennoric Labs](https://github.com/SennoricLabsAI)

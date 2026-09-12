@@ -4,9 +4,9 @@ Hand each section below to the model noted in **Best model**. Every prompt is
 self-contained: it names the real files, the pattern to copy, and the acceptance
 criteria, so the implementing model doesn't have to rediscover the codebase.
 
-Repo: `@axion-labs-ai/quark-cli` (OpenTUI + React under Bun, Node fallback).
-Global `axion` is `npm link`ed to this repo; the CLI runs from source (no build
-step). After any change: `npm link` is idempotent, just fully restart `axion`
+Repo: `@sennoric-labs-ai/solan-cli` (OpenTUI + React under Bun, Node fallback).
+Global `sennoric` is `npm link`ed to this repo; the CLI runs from source (no build
+step). After any change: `npm link` is idempotent, just fully restart `sennoric`
 (a running session holds the old source in memory).
 
 Build order: **#1 → #4 → #2 → #3 → #5 → #6 → #7**.
@@ -15,7 +15,7 @@ Build order: **#1 → #4 → #2 → #3 → #5 → #6 → #7**.
 
 ## #1 — Auto-load persisted MCP servers at startup  ·  **Best model: Big pickle (or Sonnet)**
 
-**Problem.** Persisted MCP servers in `~/.axion/mcp.json` are never connected on
+**Problem.** Persisted MCP servers in `~/.sennoric/mcp.json` are never connected on
 launch. `McpManager.init()` (`src/agent/mcp.js:195`) reads the config and starts
 every enabled server, but nothing calls it at boot — it's only reachable via
 `MCP.reload()` (`src/agent/mcp.js:265`, i.e. `/mcp reload`). Result: in every
@@ -47,8 +47,8 @@ still get included in the next message.
 **Do NOT** call `init()` inside the `App` component (it mounts per-tab → would
 spawn duplicate server processes). Call it once at the process level in `main.jsx`.
 
-**Acceptance.** With `davinci-resolve` (or any server) saved in `~/.axion/mcp.json`,
-launch `axion` in an unrelated directory, wait ~2s, and confirm `/mcp status`
+**Acceptance.** With `davinci-resolve` (or any server) saved in `~/.sennoric/mcp.json`,
+launch `sennoric` in an unrelated directory, wait ~2s, and confirm `/mcp status`
 shows it connected without having run `/resolve`. UI must open with no perceptible
 delay even when a slow `npx` server is in the config.
 
@@ -114,7 +114,7 @@ fallback (dedicated model → frame/vision fallback → throw `NO_VISUAL`), and
   - **Verify the exact block shape with one live call** before trusting it — the
     video `video_url` shape was confirmed live, not guessed; do the same here.
   - Size-cap inline base64 (mirror `MAX_VIDEO_BYTES`); allow http(s) URLs to bypass.
-- `src/config.js` — add `export const AUDIO_MODEL = { current: process.env.AXION_AUDIO_MODEL || '' };` (mirror `VIDEO_MODEL`).
+- `src/config.js` — add `export const AUDIO_MODEL = { current: process.env.SENNORIC_AUDIO_MODEL || '' };` (mirror `VIDEO_MODEL`).
 - `src/persist.js` — `getSavedAudioModel()` / `saveAudioModel(alias)` (mirror the video pair).
 - `src/agent/tools.js` — add the `analyze_audio` tool definition (near `analyze_video`)
   and its executor case (imports `./audio.js` dynamically, handles local path vs URL).
@@ -150,7 +150,7 @@ a fresh, PWA-focused rebuild, not a restore.
 
 **Constraints.** Mobile-first layout; installable (passes Lighthouse PWA install
 criteria); the chat must stream. Auth: reuse the Sennoric API key mechanism
-(`getAxionKey` in `src/persist.js`) or a simple server-side key — do not ship keys
+(`getSennoricKey` in `src/persist.js`) or a simple server-side key — do not ship keys
 to the client.
 
 **Acceptance.** Serve locally, open on a phone (or devtools mobile), "Add to Home
@@ -205,7 +205,7 @@ onto the main thread — Unity API calls off the main thread throw). The MCP ser
 Unity being up** (this exact mistake caused a 30s timeout with Resolve).
 
 **Wire-up (mirror `/resolve`):**
-- `mcp-servers/unity/unity_server.py` (+ the C# bridge, e.g. `unity/AxionBridge.cs`).
+- `mcp-servers/unity/unity_server.py` (+ the C# bridge, e.g. `unity/SennoricBridge.cs`).
 - Catalog entry in `src/agent/mcp-marketplace.js` using the `PKG_SERVER(...)`
   helper (see the `ffmpeg`/`davinci-resolve` entries), category `creative`.
 - A `/unity` command handler in `src/tui/App.jsx` (copy the `/resolve` case:

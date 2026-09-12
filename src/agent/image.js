@@ -6,7 +6,7 @@ import { API_KEYS, CUSTOM_ENDPOINTS } from '../config.js';
 
 export const IMAGE_MODEL = { current: 'dall-e-3' };
 
-const IMAGES_DIR = join(homedir(), '.axion', 'images');
+const IMAGES_DIR = join(homedir(), '.sennoric', 'images');
 
 export async function generateImage(prompt) {
   const alias = IMAGE_MODEL.current;
@@ -39,7 +39,7 @@ export async function generateImage(prompt) {
   const revisedPrompt = item.revised_prompt || prompt;
 
   if (!existsSync(IMAGES_DIR)) mkdirSync(IMAGES_DIR, { recursive: true });
-  const filename = `axion-${Date.now()}.png`;
+  const filename = `sennoric-${Date.now()}.png`;
   const filePath = join(IMAGES_DIR, filename);
   writeFileSync(filePath, Buffer.from(b64, 'base64'));
 

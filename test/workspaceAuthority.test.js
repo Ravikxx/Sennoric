@@ -13,8 +13,8 @@ import {
 } from '../src/agent/workspaceAuthority.js';
 
 function workspace(label) {
-  const root = mkdtempSync(join(tmpdir(), 'axion-authority-'));
-  const outside = mkdtempSync(join(tmpdir(), 'axion-outside-'));
+  const root = mkdtempSync(join(tmpdir(), 'sennoric-authority-'));
+  const outside = mkdtempSync(join(tmpdir(), 'sennoric-outside-'));
   setWorkspaceRoot(label, root);
   return { root, outside, options: { agentLabel: label } };
 }

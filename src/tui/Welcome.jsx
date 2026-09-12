@@ -9,8 +9,8 @@ export function Welcome({ model = '—', mode = 'ask', cwd = process.cwd(), upda
   const dir = String(cwd).split(/[\\/]/).pop() || cwd;
   return (
     <box style={{ flexDirection: 'column', flexShrink: 0, border: true, borderColor: A, paddingLeft: 2, paddingRight: 2, paddingTop: 1, paddingBottom: 1, marginTop: 1 }}>
-      <ascii-font text="AXION" font="tiny" color={A} />
-      <text><span fg="#888">by Sennoric Labs  ·  terminal AI coding agent</span></text>
+      <ascii-font text="SENNORIC" font="tiny" color={A} />
+      <text><span fg="#888">by Sennoric  ·  terminal AI coding agent</span></text>
       <text style={{ marginTop: 1 }}>
         <span fg="#888">model  </span><span fg={A}>{model}</span>
         <span fg="#888">  mode  </span><span fg="#7ee787">{`${MODE_ICONS[mode] || '·'} ${modeLabel(mode)}`}</span>

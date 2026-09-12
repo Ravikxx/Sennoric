@@ -161,8 +161,8 @@ test('python code is wrapped with a state-restore preamble and a state-save coda
   await runCode(env, 'x = 1', { networkAccess: false, timeoutMs: 10_000, language: 'python' }, stub.fn)
   const pyRunCall = stub.calls.find(c => c.url.includes('/process/code-run'))
   const pySent = JSON.parse(pyRunCall.options.body).code
-  assert.match(pySent, /import pickle as __axion_pickle/, 'must prepend the state-restore preamble')
-  assert.match(pySent, /__axion_pickle\.dump\(__axion_state, __axion_f\)/, 'must append the state-save coda')
+  assert.match(pySent, /import pickle as __sennoric_pickle/, 'must prepend the state-restore preamble')
+  assert.match(pySent, /__sennoric_pickle\.dump\(__sennoric_state, __sennoric_f\)/, 'must append the state-save coda')
   assert.match(pySent, /\nx = 1\n/, 'the original code must appear verbatim, unindented, between preamble and coda')
 
   const stub2 = fetchStub({ sandboxId: 'sb-js', codeRunResponse: { exitCode: 0, result: '' } })

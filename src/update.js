@@ -60,7 +60,7 @@ export function runUpdate() {
   process.stdout.write(
     before !== after
       ? `\n  \x1b[32m${before} → ${after}\x1b[0m  Sennoric updated successfully\n`
-      : `\n  \x1b[32mAxion is up to date (${after})\x1b[0m\n`
+      : `\n  \x1b[32mSennoric is up to date (${after})\x1b[0m\n`
   );
 
   // Show commits that arrived in this pull

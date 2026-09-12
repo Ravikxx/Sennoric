@@ -146,11 +146,11 @@ function checkComputerUse() {
   }
 }
 
-function checkAxionDir() {
+function checkSennoricDir() {
   head('Config');
-  const dir = join(homedir(), '.axion');
-  if (existsSync(dir)) ok('~/.axion directory exists');
-  else warn('~/.axion not found — will be created on first run');
+  const dir = join(homedir(), '.sennoric');
+  if (existsSync(dir)) ok('~/.sennoric directory exists');
+  else warn('~/.sennoric not found — will be created on first run');
 
   if (existsSync(join(dir, 'config.json'))) ok('Saved config found');
   else warn('No saved config yet — use /api, /model etc. inside Sennoric to persist settings');
@@ -188,14 +188,14 @@ function pingMcpServer(name, config) {
 
     proc.stdin.write(JSON.stringify({
       jsonrpc: '2.0', id: 1, method: 'initialize',
-      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'axion-doctor', version: '1.0' } },
+      params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'sennoric-doctor', version: '1.0' } },
     }) + '\n');
   });
 }
 
 async function checkMcp() {
   head('MCP');
-  const mcpFile = join(homedir(), '.axion', 'mcp.json');
+  const mcpFile = join(homedir(), '.sennoric', 'mcp.json');
   if (!existsSync(mcpFile)) { warn('No MCP servers configured — use /mcp add or /mcp install'); return; }
 
   let cfg;
@@ -266,12 +266,12 @@ function checkUpdates() {
     // If the remote hash exists locally AND is already an ancestor of our HEAD, we're
     // just ahead with unpushed commits — nothing to update.
     try { execSync(`git cat-file -e ${remote}`, { cwd: rootDir, timeout: 1000 }); }
-    catch { warn(`Update available — run \x1b[1maxion --update\x1b[0m\x1b[33m to pull the latest`); return; }
+    catch { warn(`Update available — run \x1b[1msennoric --update\x1b[0m\x1b[33m to pull the latest`); return; }
     try {
       execSync(`git merge-base --is-ancestor ${remote} ${local}`, { cwd: rootDir, timeout: 3000 });
       ok('Up to date');
     } catch {
-      warn(`Update available — run \x1b[1maxion --update\x1b[0m\x1b[33m to pull the latest`);
+      warn(`Update available — run \x1b[1msennoric --update\x1b[0m\x1b[33m to pull the latest`);
     }
   } catch {
     warn('Could not check for updates (git or network unavailable)');
@@ -287,7 +287,7 @@ export async function runDoctor() {
   checkApiKeys();
   checkGit();
   checkComputerUse();
-  checkAxionDir();
+  checkSennoricDir();
   await checkEndpoints();
   await checkMcp();
   checkUpdates();

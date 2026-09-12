@@ -6,12 +6,12 @@ import { join } from 'path';
 
 // Point the memories + chats roots at a fresh tmp dir BEFORE importing the
 // implementation modules (they read env at module load).
-const TMP = mkdtempSync(join(tmpdir(), 'axion-dream-'));
-process.env.AXION_MEMORIES_DIR = join(TMP, 'memories');
-process.env.AXION_CHATS_DIR = join(TMP, 'chats');
-process.env.AXION_LAST_SESSION_FILE = join(TMP, 'last-session.json');
-process.env.AXION_AUTO_DREAM_MIN_HOURS = '0';
-process.env.AXION_AUTO_DREAM_MIN_SESSIONS = '2';
+const TMP = mkdtempSync(join(tmpdir(), 'sennoric-dream-'));
+process.env.SENNORIC_MEMORIES_DIR = join(TMP, 'memories');
+process.env.SENNORIC_CHATS_DIR = join(TMP, 'chats');
+process.env.SENNORIC_LAST_SESSION_FILE = join(TMP, 'last-session.json');
+process.env.SENNORIC_AUTO_DREAM_MIN_HOURS = '0';
+process.env.SENNORIC_AUTO_DREAM_MIN_SESSIONS = '2';
 
 const memStore = await import('../src/services/memories/memoryStore.js');
 const ad = await import('../src/services/autoDream/autoDream.js');
@@ -71,7 +71,7 @@ test('config: isAutoDreamEnabled + getAutoDreamConfig reflect env (min_hours=0, 
 test('consolidationLock: readLastConsolidatedAt is 0 before any lock', () => {
   lockdown.rollbackConsolidationLock(0); // ensure clean slate
   // the lock file lives in the memories dir (env-overridden), so it's isolated
-  // from any real ~/.axion/memories/.
+  // from any real ~/.sennoric/memories/.
   assert.equal(lockdown.readLastConsolidatedAt(), 0);
 });
 
@@ -138,10 +138,10 @@ test('autoDream: end-to-end — write 2 sessions, run, get a "done" digest', asy
   const origEnabled = configMod.AUTO_DREAM.enabled;
   configMod.AUTO_DREAM.enabled = true;
 
-  mkdirSync(process.env.AXION_CHATS_DIR, { recursive: true });
+  mkdirSync(process.env.SENNORIC_CHATS_DIR, { recursive: true });
   const t0 = Date.now() - 100;
-  const s1 = join(process.env.AXION_CHATS_DIR, 's1.json');
-  const s2 = join(process.env.AXION_CHATS_DIR, 's2.json');
+  const s1 = join(process.env.SENNORIC_CHATS_DIR, 's1.json');
+  const s2 = join(process.env.SENNORIC_CHATS_DIR, 's2.json');
   writeFileSync(s1, JSON.stringify({
     name: 's1',
     agentHistory: [

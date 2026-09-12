@@ -1,4 +1,4 @@
--- Migration 014: Lumen's Python sandbox tool (real OpenAI-style tool
+-- Migration 014: Fresco's Python sandbox tool (real OpenAI-style tool
 -- calling, executed via Daytona — see src/sandbox.js).
 --
 -- sandbox_week_count/sandbox_week_start mirror included_week_cost/usage_week's

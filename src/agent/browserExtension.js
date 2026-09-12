@@ -8,7 +8,7 @@ import { writeJsonAtomic } from '../tui/persistence.js';
 
 const HOST = '127.0.0.1';
 const DEFAULT_PORT = 3210;
-const CONFIG_FILE = join(homedir(), '.axion', 'browser-extension.json');
+const CONFIG_FILE = join(homedir(), '.sennoric', 'browser-extension.json');
 const REQUEST_TIMEOUT = 30_000;
 
 function safeEqual(left, right) {

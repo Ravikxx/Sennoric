@@ -85,7 +85,7 @@ test('filterTools handles OpenAI-shaped tool defs ({function:{name}})', () => {
 });
 
 // ── Workspace store ───────────────────────────────────────────────────────────
-// The store writes to ~/.axion/workspaces.json — to keep tests hermetic we
+// The store writes to ~/.sennoric/workspaces.json — to keep tests hermetic we
 // exercise create→list→remove on a temp registry by stubbing the file path.
 // Rather than modify the store's hardcoded path, we test the slug helper and
 // the persist.js getCurrentWorkspaceId/setCurrentWorkspaceId round trip via

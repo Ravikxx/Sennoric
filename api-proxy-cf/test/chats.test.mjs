@@ -951,20 +951,20 @@ test('GET /settings returns defaults when no row exists yet', async () => {
 test('PUT /settings creates the row on first write and GET reflects it', async () => {
   const { env, headers } = await setup()
   const put = await app.request('/settings', {
-    method: 'PUT', headers, body: JSON.stringify({ selected_model: 'lumen-pro' }),
+    method: 'PUT', headers, body: JSON.stringify({ selected_model: 'fresco-pro' }),
   }, env)
   assert.equal(put.status, 200)
   const body = await put.json()
-  assert.equal(body.selected_model, 'lumen-pro')
+  assert.equal(body.selected_model, 'fresco-pro')
   assert.equal(body.onboarding_completed_at, null)
 
   const get = await app.request('/settings', { headers }, env)
-  assert.equal((await get.json()).selected_model, 'lumen-pro')
+  assert.equal((await get.json()).selected_model, 'fresco-pro')
 })
 
 test('PUT /settings with only onboarding_completed does not clobber a previously set model', async () => {
   const { env, headers } = await setup()
-  await app.request('/settings', { method: 'PUT', headers, body: JSON.stringify({ selected_model: 'lumen-pro' }) }, env)
+  await app.request('/settings', { method: 'PUT', headers, body: JSON.stringify({ selected_model: 'fresco-pro' }) }, env)
   const accepted = await app.request('/settings', {
     method: 'PUT', headers, body: JSON.stringify({
       expected_revision: 1,
@@ -976,7 +976,7 @@ test('PUT /settings with only onboarding_completed does not clobber a previously
     method: 'PUT', headers, body: JSON.stringify({ expected_revision: 2, onboarding_completed: true }),
   }, env)
   const body = await res.json()
-  assert.equal(body.selected_model, 'lumen-pro')
+  assert.equal(body.selected_model, 'fresco-pro')
   assert.ok(body.onboarding_completed_at)
 })
 
@@ -1732,7 +1732,7 @@ test('dispatchScheduledDefinitions still appends the message when a generation i
   await app.request('/chats/chat-1', { method: 'PUT', headers, body: JSON.stringify({ title: 'Busy chat' }) }, env)
   db.prepare(
     `INSERT INTO chat_generations (id, chat_id, user_id, status, model, created) VALUES (?,?,?,?,?,?)`
-  ).bind('gen-in-progress', 'chat-1', 'user-1', 'running', 'lumen', Date.now()).run()
+  ).bind('gen-in-progress', 'chat-1', 'user-1', 'running', 'fresco', Date.now()).run()
   db.prepare('UPDATE chats SET active_generation_id=? WHERE id=?').bind('gen-in-progress', 'chat-1').run()
 
   const create = await app.request('/scheduled', {

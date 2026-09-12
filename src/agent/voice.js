@@ -4,8 +4,8 @@ import { tmpdir } from 'os';
 import { unlinkSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { API_KEYS } from '../config.js';
 
-const AUDIO_FILE = join(tmpdir(), 'axion-voice.wav');
-const TTS_FILE   = join(tmpdir(), 'axion-tts.mp3');
+const AUDIO_FILE = join(tmpdir(), 'sennoric-voice.wav');
+const TTS_FILE   = join(tmpdir(), 'sennoric-tts.mp3');
 let recordingProcess = null;
 
 function getWindowsAudioDevice() {
@@ -91,7 +91,7 @@ export async function transcribeAudio(filePath) {
   }
 
   const audioData = readFileSync(filePath);
-  const boundary  = `AxionVoiceBoundary${Date.now()}`;
+  const boundary  = `SennoricVoiceBoundary${Date.now()}`;
 
   const body = Buffer.concat([
     Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="voice.wav"\r\nContent-Type: audio/wav\r\n\r\n`),

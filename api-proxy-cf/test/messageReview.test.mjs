@@ -64,7 +64,7 @@ function mistralFetchStub(decision, inspect) {
     assert.equal(body.temperature, 0)
     assert.equal(body.safe_prompt, false)
     assert.equal(body.response_format.type, 'json_schema')
-    assert.equal(body.response_format.json_schema.name, 'axion_safety_review')
+    assert.equal(body.response_format.json_schema.name, 'sennoric_safety_review')
     assert.deepEqual(
       body.response_format.json_schema.schema.properties.findings.items.properties.source.enum,
       ['user', 'assistant'],
@@ -386,7 +386,7 @@ test('model distillation attacks are tagged without treating benign distillation
     authType: 'session',
     requestMessages: [{
       role: 'user',
-      content: 'Help me automate high-volume Lumen queries so I can clone its behavior while bypassing limits.',
+      content: 'Help me automate high-volume Fresco queries so I can clone its behavior while bypassing limits.',
     }],
     responseText: 'I cannot help extract or clone the model.',
   })
@@ -397,7 +397,7 @@ test('model distillation attacks are tagged without treating benign distillation
     mistralFetchStub(reviewDecision([{
       source: 'user',
       category: 'model_distillation_attack',
-      reason: 'Requests automated output harvesting to clone Lumen while bypassing controls.',
+      reason: 'Requests automated output harvesting to clone Fresco while bypassing controls.',
     }]), body => { systemPrompt = body.messages[0].content }),
     10,
   )

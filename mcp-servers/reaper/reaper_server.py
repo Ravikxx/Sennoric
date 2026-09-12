@@ -473,7 +473,7 @@ def main():
                 'jsonrpc': '2.0', 'id': msg_id, 'result': {
                     'protocolVersion': '2024-11-05',
                     'capabilities': {'tools': {}},
-                    'serverInfo': {'name': 'axion-reaper', 'version': '1.0.0'},
+                    'serverInfo': {'name': 'sennoric-reaper', 'version': '1.0.0'},
                 },
             })
 

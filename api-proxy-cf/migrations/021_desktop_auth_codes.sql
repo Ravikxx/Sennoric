@@ -8,7 +8,7 @@
 --
 -- Why a table rather than a stateless signed code: an authorization code MUST
 -- be single-use. A signed, self-contained code would be replayable for its
--- whole lifetime by anyone who observed the axion:// callback, and PKCE alone
+-- whole lifetime by anyone who observed the sennoric:// callback, and PKCE alone
 -- does not prevent replay by the party that legitimately holds the verifier.
 -- `redeemed_at` is what makes redemption exactly-once.
 CREATE TABLE desktop_auth_codes (

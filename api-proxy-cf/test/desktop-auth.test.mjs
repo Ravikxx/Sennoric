@@ -135,7 +135,7 @@ test('approve requires authentication', async () => {
 })
 
 test('a code cannot be redeemed with the wrong verifier', async () => {
-  // This is the whole point of PKCE: intercepting the axion:// callback gives
+  // This is the whole point of PKCE: intercepting the sennoric:// callback gives
   // an attacker the code but not the verifier.
   const { env } = makeEnv()
   const token = await sessionToken('u1')
@@ -235,8 +235,8 @@ test('the old HttpOnly session migrates through a signed single-use handoff', as
   const { env } = makeEnv()
   const token = await sessionToken('u1')
   const start = await app.request(
-    'https://api.amplifiedsmp.org/auth/domain-migrate?return=https%3A%2F%2Faxion.amplifiedsmp.org%2Fkeys%3Ftab%3Dusage',
-    { headers: { Cookie: `axion_session=${token}` } },
+    'https://api.amplifiedsmp.org/auth/domain-migrate?return=https%3A%2F%2Fsennoric.amplifiedsmp.org%2Fkeys%3Ftab%3Dusage',
+    { headers: { Cookie: `sennoric_session=${token}` } },
     env,
   )
 
@@ -268,7 +268,7 @@ test('an expired domain migration code cannot be accepted', async () => {
   const token = await sessionToken('u1')
   const start = await app.request(
     'https://api.amplifiedsmp.org/auth/domain-migrate?return=%2Fkeys',
-    { headers: { Cookie: `axion_session=${token}` } },
+    { headers: { Cookie: `sennoric_session=${token}` } },
     env,
   )
   const acceptUrl = new URL(start.headers.get('location'))
@@ -284,7 +284,7 @@ test('an expired domain migration code cannot be accepted', async () => {
 test('domain migration without an old session redirects without minting a handoff', async () => {
   const { env } = makeEnv()
   const response = await app.request(
-    'https://api.amplifiedsmp.org/auth/domain-migrate?return=https%3A%2F%2Faxion.amplifiedsmp.org%2Fdocs',
+    'https://api.amplifiedsmp.org/auth/domain-migrate?return=https%3A%2F%2Fsennoric.amplifiedsmp.org%2Fdocs',
     {},
     env,
   )
@@ -295,11 +295,11 @@ test('domain migration without an old session redirects without minting a handof
 test('the old website preserves paths and routes account visits through the signed handoff', async () => {
   const { env } = makeEnv()
 
-  const docs = await app.request('https://axion.amplifiedsmp.org/docs?section=cli', {}, env)
+  const docs = await app.request('https://sennoric.amplifiedsmp.org/docs?section=cli', {}, env)
   assert.equal(docs.status, 302)
   assert.equal(docs.headers.get('location'), 'https://sennoric.com/docs?section=cli')
 
-  const keys = await app.request('https://axion.amplifiedsmp.org/keys?tab=usage', {}, env)
+  const keys = await app.request('https://sennoric.amplifiedsmp.org/keys?tab=usage', {}, env)
   assert.equal(keys.status, 302)
   const migrate = new URL(keys.headers.get('location'))
   assert.equal(migrate.origin, 'https://api.amplifiedsmp.org')

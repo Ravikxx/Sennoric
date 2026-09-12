@@ -1,4 +1,4 @@
-const CACHE = 'axion-pwa-v1';
+const CACHE = 'sennoric-pwa-v1';
 const SHELL = [
   '/',
   '/app.js',

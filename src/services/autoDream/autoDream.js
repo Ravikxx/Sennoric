@@ -1,7 +1,7 @@
 // Background memory consolidation — adapted from openclaude's autoDream.ts to
 // Sennoric's sync-fs + Agent model. Fires a consolidation pass after a sampling
 // turn ONLY when:
-//   1. Enabled gate  — AXION_AUTO_DREAM flag is on
+//   1. Enabled gate  — SENNORIC_AUTO_DREAM flag is on
 //   2. Time gate    — hours since lastConsolidatedAt >= minHours
 //   3. Session gate — # of session transcripts touched since last >= minSessions
 //   4. Lock          — no other live process mid-consolidation
@@ -34,8 +34,8 @@ import {
   writeMemoryDigest,
 } from '../memories/memoryStore.js';
 
-const CHATS_DIR = process.env.AXION_CHATS_DIR || join(homedir(), '.axion', 'chats');
-const LAST_SESSION_FILE = process.env.AXION_LAST_SESSION_FILE || join(homedir(), '.axion', 'last-session.json');
+const CHATS_DIR = process.env.SENNORIC_CHATS_DIR || join(homedir(), '.sennoric', 'chats');
+const LAST_SESSION_FILE = process.env.SENNORIC_LAST_SESSION_FILE || join(homedir(), '.sennoric', 'last-session.json');
 
 // Scan throttle: when the time-gate passes but the session-gate doesn't, we
 // re-scan at most this often (the lock mtime doesn't advance under skip).

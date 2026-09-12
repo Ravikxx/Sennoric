@@ -1,5 +1,5 @@
 {
-  "name": "@axion-labs-ai/quark-cli",
+  "name": "@sennoric-labs-ai/solan-cli",
   "version": "2.0.5",
   "description": "Sennoric by Sennoric Labs — terminal AI coding agent",
   "publishConfig": {
@@ -7,11 +7,11 @@
   },
   "type": "module",
   "bin": {
-    "axion": "src/tui/launch.js",
-    "axion-blender": "mcp-servers/blender/index.js",
-    "axion-discord": "src/discord-daemon.js",
-    "axion-collect": "src/collect-daemon.js",
-    "axion-bridge": "src/bridge.js"
+    "sennoric": "src/tui/launch.js",
+    "sennoric-blender": "mcp-servers/blender/index.js",
+    "sennoric-discord": "src/discord-daemon.js",
+    "sennoric-collect": "src/collect-daemon.js",
+    "sennoric-bridge": "src/bridge.js"
   },
   "scripts": {
     "start": "node src/tui/launch.js",

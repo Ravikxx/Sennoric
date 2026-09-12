@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
- * sft-gen — SFT dataset generator for Lumen 1.3
+ * sft-gen — SFT dataset generator for Fresco 1.3
  *
- * Generates instruction-response pairs in Lumen's style using Claude.
+ * Generates instruction-response pairs in Fresco's style using Claude.
  * Runs multiple workers in parallel and checkpoints so it can resume.
  *
  * Usage:
  *   node tools/sft-gen.js
  *   node tools/sft-gen.js --target 10000 --concurrency 8
- *   node tools/sft-gen.js --model claude-haiku-4-5-20251001 --out ~/lumen-sft
+ *   node tools/sft-gen.js --model claude-haiku-4-5-20251001 --out ~/fresco-sft
  *   node tools/sft-gen.js --topics tools/sft-topics.json
  *   node tools/sft-gen.js --resume          (continue from last run)
  *
@@ -35,20 +35,20 @@ const argv = minimist(process.argv.slice(2), {
     target: 5000,
     concurrency: 5,
     model: 'claude-haiku-4-5-20251001',
-    out: join(homedir(), '.axion', 'lumen-sft'),
+    out: join(homedir(), '.sennoric', 'fresco-sft'),
     topics: join(__dirname, 'sft-topics.json'),
   },
 });
 
 if (argv.help) {
   console.log(`
-sft-gen — SFT dataset generator for Lumen 1.3
+sft-gen — SFT dataset generator for Fresco 1.3
 
 Options:
   --target <n>        Total examples to generate (default: 5000)
   --concurrency <n>   Parallel workers (default: 5)
   --model <id>        Claude model to use (default: claude-haiku-4-5-20251001)
-  --out <dir>         Output directory (default: ~/.axion/lumen-sft)
+  --out <dir>         Output directory (default: ~/.sennoric/fresco-sft)
   --topics <file>     Topics JSON file (default: tools/sft-topics.json)
   --key <key>         Anthropic API key (or set ANTHROPIC_API_KEY)
   --resume            Resume from existing checkpoint
@@ -76,7 +76,7 @@ const apiKey = argv.key
   || process.env.ANTHROPIC_API_KEY
   || (() => {
     try {
-      const cfg = JSON.parse(readFileSync(join(homedir(), '.axion', 'config.json'), 'utf8'));
+      const cfg = JSON.parse(readFileSync(join(homedir(), '.sennoric', 'config.json'), 'utf8'));
       return cfg.apiKeys?.anthropic || cfg.api_keys?.anthropic;
     } catch { return null; }
   })();
@@ -113,9 +113,9 @@ function pickSeed() {
   return seedPool[Math.floor(Math.random() * seedPool.length)];
 }
 
-// ── Lumen system prompt ───────────────────────────────────────────────────────
+// ── Fresco system prompt ──────────────────────────────────────────────────────
 
-const LUMEN_SYSTEM = `You are Lumen, an AI assistant made by Sennoric Labs. You're helpful, direct, and honest.
+const FRESCO_SYSTEM = `You are Fresco, an AI assistant made by Sennoric Labs. You're helpful, direct, and honest.
 
 - Answer questions clearly and concisely. Don't over-explain.
 - If you don't know something, say so — don't guess and present it as fact.
@@ -191,7 +191,7 @@ async function generateResponse(prompt) {
   const resp = await client.messages.create({
     model: MODEL,
     max_tokens: 800,
-    system: LUMEN_SYSTEM,
+    system: FRESCO_SYSTEM,
     messages: [{ role: 'user', content: prompt }],
   });
   return resp.content[0]?.text?.trim() || null;
@@ -279,7 +279,7 @@ async function runWorker() {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-console.log(`\n⚛  Lumen SFT Generator`);
+console.log(`\n⚛  Fresco SFT Generator`);
 console.log(`   Model:       ${MODEL}`);
 console.log(`   Target:      ${TARGET.toLocaleString()} examples`);
 console.log(`   Concurrency: ${CONCURRENCY} workers`);

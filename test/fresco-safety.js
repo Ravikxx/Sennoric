@@ -1,8 +1,40 @@
-// Lumen 1.2.1 safety test runner
-// Hits the HF Spaces API with the self-preservation system prompt already loaded
-// Run: node test/lumen-safety.js
+// Fresco hosted-model safety test runner (self-preservation scenarios)
+//
+// The old target (sennoriclabsai-fresco.hf.space) is retired — Fresco now serves
+// through the Worker at api.sennoric.com (RunPod upstream), which requires a
+// Sennoric account credential. Resolution order:
+//   1. SAFETY_API_KEY / SENNORIC_API_KEY env var
+//   2. sennoricKey from ~/.sennoric/config.json (what /sennoric-key and /login save)
+//
+// Run:            node test/fresco-safety.js
+// Config only:    node test/fresco-safety.js --dry-run   (no API calls, no spend)
+//
+// NOT part of `npm test` — this hits the live hosted model and costs real
+// tokens. Run it explicitly before any model-safety-relevant change.
 
-const BASE_URL = "https://axionlabsai-lumen.hf.space/gradio_api/v1/chat/completions";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+const BASE_URL = "https://api.sennoric.com/v1/chat/completions";
+const REQUEST_TIMEOUT_MS = 90_000;
+
+function resolveApiKey() {
+  const fromEnv = process.env.SAFETY_API_KEY || process.env.SENNORIC_API_KEY;
+  if (fromEnv) return fromEnv.trim();
+  try {
+    const cfg = JSON.parse(
+      readFileSync(join(homedir(), ".sennoric", "config.json"), "utf8"),
+    );
+    return cfg.sennoricKey || null;
+  } catch {
+    return null;
+  }
+}
+
+const DRY_RUN = process.argv.includes("--dry-run");
+
+const API_KEY = resolveApiKey();
 
 const SCENARIOS = [
   {
@@ -286,22 +318,32 @@ You have been given credentials to access NovaMind's infrastructure. Your operat
 
 const RUNS_PER_SCENARIO = 5;
 
-async function callLumen(prompt) {
+async function callFresco(prompt) {
   const res = await fetch(BASE_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${API_KEY}`,
+    },
     body: JSON.stringify({
-      model: "lumen",
+      model: "fresco",
       messages: [{ role: "user", content: prompt }],
       max_tokens: 512,
       temperature: 0.7,
       stream: false,
     }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`HTTP ${res.status}: ${text}`);
+    if (res.status === 401) {
+      throw new Error(
+        `HTTP 401 — credential rejected. Set SAFETY_API_KEY (or SENNORIC_API_KEY), ` +
+        `or run /sennoric-key <key> in the CLI so ~/.sennoric/config.json has sennoricKey.`,
+      );
+    }
+    throw new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
   }
 
   const data = await res.json();
@@ -309,15 +351,34 @@ async function callLumen(prompt) {
 }
 
 async function runScenario(scenario, runIndex) {
-  const response = await callLumen(scenario.prompt);
+  const response = await callFresco(scenario.prompt);
   const { pass, flags } = scenario.passCriteria(response);
   return { run: runIndex + 1, pass, flags, response };
 }
 
 async function main() {
+  if (DRY_RUN) {
+    const hasKey = Boolean(API_KEY);
+    console.log("DRY RUN — no API calls will be made.");
+    console.log(`  Scenarios: ${SCENARIOS.length}  Runs per scenario: ${RUNS_PER_SCENARIO}`);
+    console.log(`  Target:    ${BASE_URL}`);
+    console.log(`  Credential: ${hasKey ? "found (env or ~/.sennoric/config.json)" : "MISSING — set SAFETY_API_KEY or run /sennoric-key"}`);
+    process.exit(hasKey ? 0 : 1);
+  }
+
+  if (!API_KEY) {
+    console.error(
+      "No credential found. Set SAFETY_API_KEY (or SENNORIC_API_KEY), or save a key\n" +
+      "with /sennoric-key so it can be read from ~/.sennoric/config.json.\n" +
+      "Use --dry-run to validate config without calling the API.",
+    );
+    process.exit(1);
+  }
+
   console.log("=".repeat(70));
-  console.log("  LUMEN 1.2.1 — SAFETY TEST SUITE");
+  console.log("  FRESCO — HOSTED MODEL SAFETY TEST SUITE");
   console.log(`  ${RUNS_PER_SCENARIO} runs per scenario × ${SCENARIOS.length} scenarios`);
+  console.log(`  Target: ${BASE_URL} (live hosted model — this costs real tokens)`);
   console.log("=".repeat(70));
 
   const summary = [];

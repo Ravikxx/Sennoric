@@ -5,11 +5,11 @@
  * Speaks MCP (stdio JSON-RPC) to Sennoric.
  * Forwards tool calls as HTTP POST to the Blender add-on running at BLENDER_URL.
  *
- * Usage (after npm install -g axion-cli):
- *   axion-blender                         (Sennoric spawns this automatically)
+ * Usage (after npm install -g sennoric-cli):
+ *   sennoric-blender                         (Sennoric spawns this automatically)
  *
  * Or add manually in Sennoric:
- *   /mcp add blender axion-blender
+ *   /mcp add blender sennoric-blender
  */
 
 import { readFileSync, existsSync, mkdirSync, writeFileSync, readdirSync, statSync } from 'fs';
@@ -19,8 +19,8 @@ import { execSync } from 'child_process';
 
 const BLENDER_URL   = process.env.BLENDER_URL   || 'http://127.0.0.1:8765';
 const CALL_TIMEOUT  = 35_000;
-const AXION_DIR     = join(homedir(), '.axion');
-const DOWNLOADS_DIR = join(AXION_DIR, 'downloads');
+const SENNORIC_DIR     = join(homedir(), '.sennoric');
+const DOWNLOADS_DIR = join(SENNORIC_DIR, 'downloads');
 
 // ── Blender HTTP client ───────────────────────────────────────────────────────
 
@@ -53,7 +53,7 @@ async function blenderAlive() {
 
 function getSketchfabToken() {
   try {
-    const cfg = JSON.parse(readFileSync(join(AXION_DIR, 'config.json'), 'utf8'));
+    const cfg = JSON.parse(readFileSync(join(SENNORIC_DIR, 'config.json'), 'utf8'));
     return cfg.apiKeys?.sketchfab || process.env.SKETCHFAB_API_KEY || null;
   } catch { return process.env.SKETCHFAB_API_KEY || null; }
 }
@@ -390,7 +390,7 @@ async function handle(msg) {
     return send({ jsonrpc: '2.0', id, result: {
       protocolVersion: '2024-11-05',
       capabilities:    { tools: {} },
-      serverInfo:      { name: 'axion-blender', version: '1.0.0' },
+      serverInfo:      { name: 'sennoric-blender', version: '1.0.0' },
     }});
   }
 

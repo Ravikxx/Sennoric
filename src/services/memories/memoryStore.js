@@ -1,9 +1,9 @@
 // Durable memory directory — adapted from openclaude's memdir + autoDream
-// memoryRoot concept to Sennoric's flat ~/.axion/ layout. Stores consolidation
+// memoryRoot concept to Sennoric's flat ~/.sennoric/ layout. Stores consolidation
 // digests written by the auto-dream background pass; lives outside chats/ so
 // it never appears in /resume but is human-readable and survives restarts.
 //
-// Root is overridable via AXION_MEMORIES_DIR (tests use this to isolate).
+// Root is overridable via SENNORIC_MEMORIES_DIR (tests use this to isolate).
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, statSync } from 'fs';
 import { join } from 'path';
@@ -11,7 +11,7 @@ import { homedir } from 'os';
 import { writeTextAtomic, writeJsonAtomic, readJson } from '../../tui/persistence.js';
 import { randomUUID } from 'crypto';
 
-const MEMORIES_DIR = process.env.AXION_MEMORIES_DIR || join(homedir(), '.axion', 'memories');
+const MEMORIES_DIR = process.env.SENNORIC_MEMORIES_DIR || join(homedir(), '.sennoric', 'memories');
 const INDEX_FILE = join(MEMORIES_DIR, 'INDEX.md');
 
 export function getMemoriesDir() { return MEMORIES_DIR; }

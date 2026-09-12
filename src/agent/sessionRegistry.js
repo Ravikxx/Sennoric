@@ -33,7 +33,10 @@ export function registerSession(label, meta = {}) {
   const notice = `New session "${label}" started (model: ${entry.model}).${entry.goal ? ` Goal: ${entry.goal}` : ''}`;
   for (const other of SESSIONS.keys()) {
     if (other === label) continue;
-    try { BUS.send('session-registry', other, notice); } catch { /* mailbox best-effort */ }
+    try { BUS.notifyCreation('session-registry', other, notice); } catch { /* notice best-effort */ }
+  }
+  if (sessionListener) {
+    try { sessionListener(entry); } catch { /* listener best-effort */ }
   }
   return entry;
 }
@@ -91,4 +94,26 @@ export function listSessions(excludeLabel) {
       lastActivity: s.lastActivity,
       files: s.files || [],
     }));
+}
+
+// All live sessions (including the caller) — for the human-facing /sessions
+// command, which wants to show the operator everything running.
+export function listAllSessions() {
+  return [...SESSIONS.values()].map((s) => ({
+    label: s.label,
+    model: s.model,
+    goal: s.goal,
+    status: s.status,
+    createdAt: s.createdAt,
+    lastActivity: s.lastActivity,
+    files: s.files || [],
+  }));
+}
+
+// Optional operator-level listener (set by the TUI) fired on every session
+// creation so the human sees a notice when a new session spawns. Kept separate
+// from the BUS notice channel (which is for agents reading via read_messages).
+let sessionListener = null;
+export function setSessionListener(fn) {
+  sessionListener = fn || null;
 }

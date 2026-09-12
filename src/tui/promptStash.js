@@ -3,7 +3,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { writeTextAtomic } from './persistence.js';
 
-const DIR = join(homedir(), '.axion');
+const DIR = join(homedir(), '.sennoric');
 const STASH_FILE = join(DIR, 'prompt-stash.jsonl');
 const MAX_STASH = 50;
 

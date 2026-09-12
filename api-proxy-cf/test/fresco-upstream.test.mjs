@@ -10,7 +10,7 @@ import {
 
 const env = { RUNPOD_ENDPOINT_ID: 'ep-test', RUNPOD_API_KEY: 'rp-test-key' }
 
-const SERVED_MODEL_NAME = 'AxionLabsAI/Lumen-1.2.5'
+const SERVED_MODEL_NAME = 'SennoricLabsAI/Fresco-1.2.5'
 
 const completion = {
   id: 'chatcmpl-test',

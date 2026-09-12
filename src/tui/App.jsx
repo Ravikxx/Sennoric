@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useKeyboard, useTerminalDimensions, useRenderer, useSelectionHandler, usePaste } from '@opentui/react';
 import { accent, THEMES, setTheme, themeName } from '../ui/theme.js';
-import { Agent, isAxionHostedProvider } from '../agent/agent.js';
+import { Agent, isSennoricHostedProvider } from '../agent/agent.js';
 import { MODELS, CONTEXT_WINDOWS, getContextWindow, estimateCost, API_KEYS, VISION_MODEL, VIDEO_MODEL, AUDIO_MODEL } from '../config.js';
 import {
   getTodos, saveModel, saveMode, getSavedTheme, saveTheme, getAllowedTools, allowTool, autosaveSession, autosaveWorkspace, clearLastSession, clearWorkspace, clearTodos,
@@ -9,7 +9,7 @@ import {
   listChats, loadChat, deleteChat, saveChat, exportChat,
   exportSession, importSession,
   listProfiles, saveProfile, loadProfile, deleteProfile,
-  saveApiKey, saveCustomEndpoints, getAxionKey, saveAxionKey, getSavedApiKeys,
+  saveApiKey, saveCustomEndpoints, getSennoricKey, saveSennoricKey, getSavedApiKeys,
   saveAdviserModel, saveVisionModel, saveVideoModel, saveAudioModel, saveImageModel,
   getSkills, saveSkill, deleteSkill,
   undoLastBackup, listCheckpoints, rewindCheckpoints,
@@ -72,6 +72,7 @@ import {
   getWorkspaceGrant, grantWorkspace, revokeWorkspaceGrant, WORKSPACE_SCOPES,
 } from '../agent/workspaceAuthority.js';
 import { BUS } from '../agent/bus.js';
+import { setSessionListener } from '../agent/sessionRegistry.js';
 import { pushStash, popStash, getAllStashes, deleteStash } from './promptStash.js';
 import { pushHistory, loadHistory } from './promptHistory.js';
 import { StashDialog } from './dialog-stash.js';
@@ -92,7 +93,7 @@ try {
 // Reuses the UI-agnostic Agent class (callbacks → message list). Row layout:
 // scrollable message pane + framed input on the left, workspace sidebar on right.
 // NOTE (preview): tool confirms / question prompts are auto-approved for now —
-// the real prompt UI is a later milestone. Shipped `axion` stays on Ink until parity.
+// the real prompt UI is a later milestone. Shipped `sennoric` stays on Ink until parity.
 
 // Expand `@path` file mentions: prepend each referenced file's contents to the
 // text sent to the agent (the displayed message keeps the bare @mention).
@@ -580,6 +581,20 @@ function Session({
   const [histPos, setHistPos] = useState(0); // 0 = live input; 1 = last sent; N = oldest
 
   const push = useCallback((msg) => setMessages((m) => [...m, msg]), []);
+
+  // Surface live session creation to the operator (the human running this TUI),
+  // so spawning a code-chat/agent shows a notice here too. Skips the operator's
+  // own 'main' session; the underlying BUS notices handle agent-to-agent comms.
+  useEffect(() => {
+    setSessionListener((entry) => {
+      if (entry.label === 'main') return;
+      push({
+        type: 'info',
+        text: `New session "${entry.label}" started${entry.model ? ` (model: ${entry.model})` : ''}${entry.goal ? ` — ${entry.goal}` : ''}`,
+      });
+    });
+    return () => setSessionListener(null);
+  }, [push]);
   const setInputSafe = useCallback((v) => { inputRef.current = v; setInput(v); }, []);
   const toggleExpand = useCallback((i) => {
     // Defer the re-render/relayout out of the native mouse/key event — running a
@@ -822,7 +837,7 @@ function Session({
   useEffect(() => {
     if (onboardingDone || initialResume || !isActive) return;
     onboardingDone = true;
-    const hasKey = getAxionKey() || Object.values(getSavedApiKeys()).some(Boolean) || Object.values(API_KEYS).some(Boolean);
+    const hasKey = getSennoricKey() || Object.values(getSavedApiKeys()).some(Boolean) || Object.values(API_KEYS).some(Boolean);
     if (hasKey) return;
     questionSpecRef.current = { type: 'onboarding' };
     setPendingForm(ONBOARDING_FORM);
@@ -845,7 +860,7 @@ function Session({
   }, [messages, model, mode, tokens, todoScope, cwdState]);
 
   // Report this tab's session snapshot up to the shell 1s after it settles. The
-  // shell persists the active tab to the "last session" slot (for `axion -c`) and
+  // shell persists the active tab to the "last session" slot (for `sennoric -c`) and
   // all tabs to the workspace file (so background tabs survive a crash/exit).
   const autosaveTimer = useRef(null);
   useEffect(() => {
@@ -1389,7 +1404,7 @@ function Session({
           ['Files & context',   ['include', 'add', 'run', 'search', 'history', 'undo', 'rewind']],
           ['Chats',             ['save', 'resume', 'sessions', 'remove-chat', 'search-chats', 'export', 'export-session', 'import-session', 'copy', 'copy-block']],
           ['Git',               ['git', 'pr', 'review']],
-          ['Keys & endpoints',  ['api', 'axion-key', 'login', 'endpoint']],
+          ['Keys & endpoints',  ['api', 'sennoric-key', 'login', 'endpoint']],
           ['Agent behavior',    ['thinking', 'system', 'adviser', 'goal', 'retry', 'btw', 'compare', 'compare-models', 'remember', 'forget', 'todo', 'skills', 'skill-generator', 'skill-delete', 'profile', 'permissions', 'watch']],
           ['Computer & media',  ['computer', 'cu', 'vision', 'ss', 'macro', 'speak', 'img-gen', 'img-gen-model']],
            ['Integrations',      ['discord', 'oauth', 'schedule', 'resolve', 'reaper', 'unity', 'unreal', 'blender', 'mcp', 'contribute']],
@@ -1576,7 +1591,7 @@ function Session({
         }
         if (sub === 'list') {
           const files = listPlanFiles();
-          const planDir = join(homedir(), '.axion', 'plans');
+          const planDir = join(homedir(), '.sennoric', 'plans');
           if (!files.length) { push({ type: 'info', text: 'No plan files yet.' }); return; }
           push({ type: 'info', text: `Plan files (${planDir}):\n${files.map(f => `  ${f}`).join('\n')}` });
           return;
@@ -1906,8 +1921,8 @@ function Session({
         const known = !!(MODELS[target] || MODELS[target.toLowerCase()] || CUSTOM_ENDPOINTS[target]);
         const provider = resolveProvider(target);
         const noKeyNeeded = ['custom', 'ollama'].includes(provider);
-        const axionHosted = isAxionHostedProvider(provider);
-        const hasKey = noKeyNeeded || !!API_KEYS[provider] || (axionHosted && !!getAxionKey());
+        const sennoricHosted = isSennoricHostedProvider(provider);
+        const hasKey = noKeyNeeded || !!API_KEYS[provider] || (sennoricHosted && !!getSennoricKey());
         agentRef.current?.setAdviserModel(target); saveAdviserModel(target);
         const note = !hasKey
           ? `\n⚠ no API key for provider "${provider}" — set one with /api ${provider} <key>, or the adviser will fail`
@@ -2098,6 +2113,20 @@ function Session({
         push({ type: 'info', text: `Sessions:\n${chats.map(c => `  ${c.name.padEnd(20)} ${(c.model || '?').padEnd(14)} ${c.messages ?? '?'} msgs`).join('\n')}` });
         return;
       }
+      case 'peers': {
+        // Live sessions (concurrent code chats / spawned agents) running in this
+        // process — distinct from /sessions which lists saved chats.
+        const { listAllSessions } = await import('../agent/sessionRegistry.js');
+        const peers = listAllSessions();
+        if (!peers.length) { push({ type: 'info', text: 'No live sessions.' }); return; }
+        const lines = peers.map((p) => {
+          const when = new Date(p.lastActivity).toLocaleTimeString();
+          const files = (p.files || []).length ? ` · ${p.files.length} file(s)` : '';
+          return `- ${p.label} (model: ${p.model}, status: ${p.status}, active ${when})${files}${p.goal ? `\n    goal: ${p.goal}` : ''}`;
+        });
+        push({ type: 'info', text: `Live sessions (${peers.length}):\n${lines.join('\n')}` });
+        return;
+      }
       case 'remove-chat': {
         if (!arg) { push({ type: 'error', text: 'usage: /remove-chat <name>' }); return; }
         const existed = deleteChat(arg);
@@ -2128,7 +2157,7 @@ function Session({
       case 'api': {
         const [apiTarget, apiKey] = args;
         if (!apiTarget || !apiKey) { push({ type: 'error', text: 'usage: /api <model> <key>' }); return; }
-        if (apiTarget === 'fresco' || apiTarget === 'axion') { return runCommand(`/axion-key ${apiKey}`); }
+        if (apiTarget === 'fresco' || apiTarget === 'sennoric') { return runCommand(`/sennoric-key ${apiKey}`); }
         try {
           const { setApiKey } = await import('../config.js');
           const provider = setApiKey(apiTarget, apiKey);
@@ -2137,16 +2166,16 @@ function Session({
         } catch (err) { push({ type: 'error', text: err.message }); }
         return;
       }
-      case 'axion-key': {
+      case 'sennoric-key': {
         const [keyArg] = args;
         if (!keyArg) {
-          const existing = getAxionKey();
-          push({ type: 'info', text: existing ? `Sennoric API key: ${existing.slice(0, 14)}••••••••` : 'No Sennoric API key set. Fresco requires a free Sennoric account.\nUse /login, or /axion-key <your-axion-sk-key>.' });
+          const existing = getSennoricKey();
+          push({ type: 'info', text: existing ? `Sennoric API key: ${existing.slice(0, 14)}••••••••` : 'No Sennoric API key set. Fresco requires a free Sennoric account.\nUse /login, or /sennoric-key <your-sennoric-sk-key>.' });
           return;
         }
-        if (keyArg === 'remove') { saveAxionKey(null); push({ type: 'info', text: 'Sennoric API key removed. Fresco is unavailable until you use /login or set another Sennoric key.' }); return; }
+        if (keyArg === 'remove') { saveSennoricKey(null); push({ type: 'info', text: 'Sennoric API key removed. Fresco is unavailable until you use /login or set another Sennoric key.' }); return; }
         if (keyArg === 'test') {
-          const testKey = getAxionKey();
+          const testKey = getSennoricKey();
           if (!testKey) { push({ type: 'error', text: 'No Sennoric key set.' }); return; }
           push({ type: 'info', text: 'Testing key…' });
           fetch('https://api.sennoric.com/v1/chat/completions', {
@@ -2161,8 +2190,8 @@ function Session({
           }).catch(e => push({ type: 'error', text: `Network error: ${e.message}` }));
           return;
         }
-        saveAxionKey(keyArg);
-        push({ type: 'info', text: `Sennoric API key saved (${keyArg.slice(0, 14)}••••••••). /axion-key test to verify.` });
+        saveSennoricKey(keyArg);
+        push({ type: 'info', text: `Sennoric API key saved (${keyArg.slice(0, 14)}••••••••). /sennoric-key test to verify.` });
         return;
       }
       case 'endpoint': {
@@ -2326,7 +2355,7 @@ function Session({
           return;
         }
         setGoal(arg);
-        push({ type: 'info', text: `Goal set: "${arg}"\nAxion will work autonomously until this is achieved.` });
+        push({ type: 'info', text: `Goal set: "${arg}"\nSennoric will work autonomously until this is achieved.` });
         return;
       }
       case 'add': {
@@ -2370,7 +2399,10 @@ function Session({
         return;
       }
       case 'vision': {
-        if (!arg) { push({ type: 'info', text: `Vision model: ${VISION_MODEL.current}\n/vision <model> e.g. /vision claude` }); return; }
+        // No built-in vision model since sennoric-vision retired — say so instead
+        // of printing a blank value.
+        const cur = VISION_MODEL.current || '(none set — computer use and /ss need one, e.g. /vision fresco)';
+        if (!arg) { push({ type: 'info', text: `Vision model: ${cur}\n/vision <model> e.g. /vision fresco` }); return; }
         VISION_MODEL.current = arg;
         saveVisionModel(arg);
         push({ type: 'info', text: `Vision model → ${arg} (saved)\n/computer on to enable screen control.` });
@@ -2420,10 +2452,10 @@ function Session({
         return;
       }
       case 'login': {
-        const AXION_API = 'https://api.sennoric.com';
+        const SENNORIC_API = 'https://api.sennoric.com';
         push({ type: 'info', text: 'Opening browser to authorize your Sennoric account…' });
         try {
-          const res = await fetch(`${AXION_API}/auth/device`, { method: 'POST' });
+          const res = await fetch(`${SENNORIC_API}/auth/device`, { method: 'POST' });
           if (!res.ok) throw new Error('Failed to start login flow');
           const { device_code, expires_in } = await res.json();
           const deviceCode = String(device_code);
@@ -2436,17 +2468,17 @@ function Session({
           const poll = async () => {
             if (Date.now() > deadline) { push({ type: 'error', text: 'Login timed out.' }); return; }
             try {
-              const pollRes = await fetch(`${AXION_API}/auth/device/poll?code=${device_code}`);
+              const pollRes = await fetch(`${SENNORIC_API}/auth/device/poll?code=${device_code}`);
               const data = await pollRes.json();
               if (data.pending) { setTimeout(poll, 2500); return; }
               if (data.token) {
-                const keyRes = await fetch(`${AXION_API}/account/keys`, {
+                const keyRes = await fetch(`${SENNORIC_API}/account/keys`, {
                   method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.token}` },
-                  body: JSON.stringify({ label: `axion-cli (${new Date().toLocaleDateString()})` }),
+                  body: JSON.stringify({ label: `sennoric-cli (${new Date().toLocaleDateString()})` }),
                 });
                 const keyData = await keyRes.json();
-                if (keyData.key_value) { saveAxionKey(keyData.key_value); push({ type: 'info', text: `Logged in as ${data.email}\nAPI key created and saved.` }); }
-                else { push({ type: 'error', text: 'Authorized but could not create API key. Try /axion-key <key> manually.' }); }
+                if (keyData.key_value) { saveSennoricKey(keyData.key_value); push({ type: 'info', text: `Logged in as ${data.email}\nAPI key created and saved.` }); }
+                else { push({ type: 'error', text: 'Authorized but could not create API key. Try /sennoric-key <key> manually.' }); }
                 return;
               }
               if (data.error) { push({ type: 'error', text: `Login failed: ${data.error}` }); return; }
@@ -2677,12 +2709,12 @@ function Session({
       }
       case 'blender': {
         if (arg === 'setup') {
-          push({ type: 'info', text: 'Blender add-on setup:\n1. Open Blender\n2. Edit → Preferences → Add-ons → Install…\n3. Select axion_blender.py from mcp-servers/blender/\n4. Enable the add-on\n5. Run /blender connect' });
+          push({ type: 'info', text: 'Blender add-on setup:\n1. Open Blender\n2. Edit → Preferences → Add-ons → Install…\n3. Select sennoric_blender.py from mcp-servers/blender/\n4. Enable the add-on\n5. Run /blender connect' });
           return;
         }
         push({ type: 'info', text: 'Connecting Blender MCP…' });
         try {
-          const srv = await MCP.addServer('blender', { command: 'axion-blender', args: [] });
+          const srv = await MCP.addServer('blender', { command: 'sennoric-blender', args: [] });
           if (srv.ready) push({ type: 'info', text: `● Blender MCP connected — ${srv.tools.length} tools available.` });
           else push({ type: 'error', text: `Blender MCP failed: ${srv.error}` });
         } catch (err) { push({ type: 'error', text: `Connection failed: ${err.message}` }); }
@@ -2704,7 +2736,7 @@ function Session({
             s.on('error', () => resolve(false));
           });
           if (!(await isListening(9876))) {
-            // Anchor to the axion package, not cwd — /resolve must work from any directory
+            // Anchor to the sennoric package, not cwd — /resolve must work from any directory
             const bp = fileURLToPath(new URL('../../mcp-servers/davinci-resolve/resolve_bridge.py', import.meta.url));
             // Keep the bridge installed in Resolve's Scripts menu — on the FREE
             // edition external hosts (fuscript) are blocked, so the only working
@@ -2767,7 +2799,7 @@ function Session({
       }
       case 'unity': {
         if (arg === 'setup') {
-          push({ type: 'info', text: 'Unity setup:\n1. Open your Unity project in the editor\n2. Run /unity from inside the project directory — Sennoric copies AxionBridge.cs into Assets/Editor/ automatically\n   (or copy mcp-servers/unity/AxionBridge.cs there yourself)\n3. Unity compiles it and the console shows "[AxionBridge] listening on 127.0.0.1:9877"\n4. Run /unity — connects the MCP server. Set AXION_UNITY_PORT to change the port.' });
+          push({ type: 'info', text: 'Unity setup:\n1. Open your Unity project in the editor\n2. Run /unity from inside the project directory — Sennoric copies SennoricBridge.cs into Assets/Editor/ automatically\n   (or copy mcp-servers/unity/SennoricBridge.cs there yourself)\n3. Unity compiles it and the console shows "[SennoricBridge] listening on 127.0.0.1:9877"\n4. Run /unity — connects the MCP server. Set SENNORIC_UNITY_PORT to change the port.' });
           return;
         }
         // If cwd looks like a Unity project, install/refresh the bridge script.
@@ -2775,14 +2807,14 @@ function Session({
           const fsx = require('fs');
           const path = require('path');
           if (fsx.existsSync(path.join(process.cwd(), 'Assets'))) {
-            const src = fileURLToPath(new URL('../../mcp-servers/unity/AxionBridge.cs', import.meta.url));
+            const src = fileURLToPath(new URL('../../mcp-servers/unity/SennoricBridge.cs', import.meta.url));
             const dir = path.join(process.cwd(), 'Assets', 'Editor');
             fsx.mkdirSync(dir, { recursive: true });
-            fsx.copyFileSync(src, path.join(dir, 'AxionBridge.cs'));
-            push({ type: 'info', text: '● Installed AxionBridge.cs → Assets/Editor/ (Unity recompiles it automatically)' });
+            fsx.copyFileSync(src, path.join(dir, 'SennoricBridge.cs'));
+            push({ type: 'info', text: '● Installed SennoricBridge.cs → Assets/Editor/ (Unity recompiles it automatically)' });
           }
         } catch {}
-        push({ type: 'info', text: 'Connecting Unity MCP…\n(the Unity editor must be open with AxionBridge.cs compiled — see /unity setup)' });
+        push({ type: 'info', text: 'Connecting Unity MCP…\n(the Unity editor must be open with SennoricBridge.cs compiled — see /unity setup)' });
         try {
           const srv = await MCP.addServer('unity', {
             command: 'python3',
@@ -2918,7 +2950,7 @@ function Session({
         const payload = { donatedAt: new Date().toISOString(), turns: redacted.length, history: redacted };
         push({ type: 'info', text: 'Contributing session…' });
         const sendToCloud = () => {
-          fetch('https://axion-collect.axion-collect.workers.dev/collect', {
+          fetch('https://sennoric-collect.sennoric-collect.workers.dev/collect', {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
           }).then(r => { if (r.ok) push({ type: 'info', text: '● Session contributed — thanks!' }); else { saveDonation(hist); push({ type: 'info', text: '● Saved locally.' }); } }).catch(() => { saveDonation(hist); push({ type: 'info', text: '● Saved locally.' }); });
         };
@@ -3048,7 +3080,7 @@ function Session({
 
   useEffect(() => { submitRef.current = submit; });
 
-  // CLI initial prompt (`axion "do this"`): auto-send once on a fresh session.
+  // CLI initial prompt (`sennoric "do this"`): auto-send once on a fresh session.
   useEffect(() => {
     if (!initialPrompt || initialResume) return;
     const t = setTimeout(() => submitRef.current?.(initialPrompt), 80);
@@ -3070,7 +3102,7 @@ function Session({
       saveApiKey('openai', k); API_KEYS.openai = k;
       push({ type: 'info', text: '● OpenAI key saved. Use /model to pick a GPT model.' });
     } else {
-      saveAxionKey(k);
+      saveSennoricKey(k);
       push({ type: 'info', text: '● Sennoric key saved.' });
     }
   }, [push]);
@@ -3509,20 +3541,20 @@ export function App({ initialModel = 'fresco', initialMode = 'ask', initialResum
       // Register a per-user AppUserModelID (HKCU, no admin) so the toast is
       // attributed to "Sennoric" with the Sennoric logo instead of Windows
       // PowerShell. The logo ships in src/assets/ with the npm package
-      // and is copied once to ~/.axion so the registry points at a path that
+      // and is copied once to ~/.sennoric so the registry points at a path that
       // survives package updates. Only fixed strings and the homedir-derived
       // logo path (single-quote doubled) reach the script — no user input.
       let logoPs = '';
       try {
-        const logoDst = join(homedir(), '.axion', 'axion-logo.png');
+        const logoDst = join(homedir(), '.sennoric', 'sennoric-logo.png');
         if (!existsSync(logoDst)) {
-          mkdirSync(join(homedir(), '.axion'), { recursive: true });
+          mkdirSync(join(homedir(), '.sennoric'), { recursive: true });
           copyFileSync(fileURLToPath(new URL('../assets/logo-512.png', import.meta.url)), logoDst);
         }
         logoPs = `Set-ItemProperty -Path $reg -Name IconUri -Value '${logoDst.replace(/'/g, "''")}'`;
       } catch {}
       const toastPs = `
-$appId = 'AxionLabs.Sennoric'
+$appId = 'SennoricLabs.Sennoric'
 $reg = "HKCU:\\Software\\Classes\\AppUserModelId\\$appId"
 if (-not (Test-Path $reg)) { New-Item -Path $reg -Force | Out-Null }
 Set-ItemProperty -Path $reg -Name DisplayName -Value 'Sennoric'

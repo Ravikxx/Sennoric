@@ -6,7 +6,7 @@ import { networkInterfaces } from 'os';
 import { WebSocketServer, WebSocket } from 'ws';
 import QRCode from 'qrcode';
 import {
-  getAxionKey, getSavedModel, getSavedMode, getSavedApiKeys, getSavedCustomEndpoints,
+  getSennoricKey, getSavedModel, getSavedMode, getSavedApiKeys, getSavedCustomEndpoints,
 } from './persist.js';
 import { MODELS, API_KEYS, CUSTOM_ENDPOINTS } from './config.js';
 import { resolveProvider } from './agent/models.js';
@@ -23,7 +23,13 @@ for (const [name, ep] of Object.entries(getSavedCustomEndpoints())) {
 
 const PORT = Number(process.env.BRIDGE_PORT) || 3002;
 const TOKEN = process.env.BRIDGE_TOKEN || '';
-const RELAY_URL = process.env.AXION_BRIDGE_RELAY_URL || 'wss://api.sennoric.com/bridge/ws';
+const RELAY_URL = process.env.SENNORIC_BRIDGE_RELAY_URL || 'wss://api.sennoric.com/bridge/ws';
+// The outbound relay (mobile-app access from anywhere) is strictly opt-in:
+// the Privacy Policy promises that local bridge channels never contact
+// Sennoric unless you explicitly enable remote access. Default is off.
+const RELAY_ENABLED = ['1', 'true', 'yes', 'on'].includes(
+  String(process.env.SENNORIC_BRIDGE_RELAY_ENABLED || '').toLowerCase(),
+);
 
 const html = readFileSync(new URL('./assets/console.html', import.meta.url), 'utf-8');
 const xtermJs = readFileSync(new URL('../vendor/xterm.js', import.meta.url), 'utf-8');
@@ -113,8 +119,8 @@ function attachShell(ws) {
   ws.on('close', () => proc.kill());
   ws.on('error', () => proc.kill());
 
-  if (ws.readyState === ws.OPEN) ws.send(`\x1b[32m[axion bridge — ${shell.cmd} connected]\x1b[0m\r\n`);
-  else ws.on('open', () => ws.send(`\x1b[32m[axion bridge — ${shell.cmd} connected]\x1b[0m\r\n`));
+  if (ws.readyState === ws.OPEN) ws.send(`\x1b[32m[sennoric bridge — ${shell.cmd} connected]\x1b[0m\r\n`);
+  else ws.on('open', () => ws.send(`\x1b[32m[sennoric bridge — ${shell.cmd} connected]\x1b[0m\r\n`));
 }
 
 // ── App session (structured JSON frames over the relay) ─────────────────────
@@ -132,16 +138,16 @@ function attachShell(ws) {
 //               {type:'term',data} (shell output) {type:'tokens',...}
 
 // Local/custom providers can be used without a hosted-provider key. Sennoric
-// hosted models require the account key created by /login or /axion-key.
+// hosted models require the account key created by /login or /sennoric-key.
 const KEYLESS_PROVIDERS = new Set(['ollama', 'custom']);
-const AXION_ACCOUNT_PROVIDERS = new Set(['fresco', 'glyph', 'axion-vision']);
+const SENNORIC_ACCOUNT_PROVIDERS = new Set(['fresco', 'glyph']);
 
 function availableModels() {
   const current = getSavedModel() || 'fresco';
   const out = [];
   for (const alias of Object.keys(MODELS)) {
     const provider = resolveProvider(alias);
-    if (KEYLESS_PROVIDERS.has(provider) || API_KEYS[provider] || (AXION_ACCOUNT_PROVIDERS.has(provider) && getAxionKey())) {
+    if (KEYLESS_PROVIDERS.has(provider) || API_KEYS[provider] || (SENNORIC_ACCOUNT_PROVIDERS.has(provider) && getSennoricKey())) {
       out.push({ id: alias, provider });
     }
   }
@@ -304,7 +310,7 @@ wss.on('connection', (ws, req) => {
 
 // ── Cloudflare relay ─────────────────────────────────────────────────────────
 //
-// Dials out to the axion-api worker so the mobile app can attach to this
+// Dials out to the sennoric-api worker so the mobile app can attach to this
 // session over the internet (not just the local LAN). Uses the same
 // account key the CLI already stores from `/login`. Reconnects with backoff
 // if the connection drops; does nothing if the user isn't logged in.
@@ -314,9 +320,13 @@ let relaySocket = null;
 let relayRetryDelay = 2000;
 
 function connectRelay() {
-  const key = getAxionKey();
+  if (!RELAY_ENABLED) {
+    console.log('  relay: disabled (local-only bridge). Set SENNORIC_BRIDGE_RELAY_ENABLED=1 to allow mobile-app access over the internet.');
+    return;
+  }
+  const key = getSennoricKey();
   if (!key) {
-    console.log('  relay: no Sennoric account linked — run /login in axion, then restart the bridge to sync with the mobile app');
+    console.log('  relay: no Sennoric account linked — run /login in sennoric, then restart the bridge to sync with the mobile app');
     return;
   }
 
@@ -375,7 +385,7 @@ server.listen(PORT, () => {
 
   console.log(`
   ╔══════════════════════════════════════╗
-  ║         ⎔  axion bridge              ║
+  ║         ⎔  sennoric bridge              ║
   ╠══════════════════════════════════════╣
   ║  Local:  ${localUrl.padEnd(28)}║
   ║  LAN:    ${lanUrl.padEnd(28)}║

@@ -4,7 +4,7 @@ import { homedir } from 'os'
 import { fileURLToPath } from 'url'
 import { writeJsonAtomic } from '../tui/persistence.js'
 
-// Bundled MCP servers live inside the axion package — resolve them against
+// Bundled MCP servers live inside the sennoric package — resolve them against
 // this file, not process.cwd(), so installs work from any launch directory.
 const PKG_SERVER = (rel) => fileURLToPath(new URL(`../../mcp-servers/${rel}`, import.meta.url))
 
@@ -197,11 +197,11 @@ export const MCP_MARKETPLACE = [
   {
     id: 'unity',
     name: 'Unity',
-    description: 'Control the Unity editor — scene info, list/select/create/delete GameObjects, set transforms, run menu commands, and enter/exit play mode via the AxionBridge editor script',
+    description: 'Control the Unity editor — scene info, list/select/create/delete GameObjects, set transforms, run menu commands, and enter/exit play mode via the SennoricBridge editor script',
     category: 'creative',
     command: 'python3',
     args: ['-u', PKG_SERVER('unity/unity_server.py')],
-    envNote: 'Requires the Unity editor open with AxionBridge.cs in an Editor/ folder. Run /unity setup for instructions.',
+    envNote: 'Requires the Unity editor open with SennoricBridge.cs in an Editor/ folder. Run /unity setup for instructions.',
     tags: ['unity', 'gamedev', 'editor', 'gameobject', 'scene', '3d'],
   },
   {
@@ -231,7 +231,7 @@ export const CATEGORIES = {
 // ── Remote catalog fetch ───────────────────────────────────────────────────
 
 function cachePath() {
-  return join(homedir(), '.axion', 'mcp-catalog-cache.json')
+  return join(homedir(), '.sennoric', 'mcp-catalog-cache.json')
 }
 
 async function loadRemoteCatalog() {

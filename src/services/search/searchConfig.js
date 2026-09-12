@@ -14,7 +14,7 @@ export function resolveBackend() {
   // Read the env override at call time as well as startup. This keeps the
   // service deterministic for long-lived/plugin processes that intentionally
   // switch backends after the config module has loaded.
-  const backend = process.env.AXION_SEARCH_BACKEND || SEARCH_CONFIG.backend;
+  const backend = process.env.SENNORIC_SEARCH_BACKEND || SEARCH_CONFIG.backend;
   if (backend === 'fs') return 'fs';
   if (backend === 'ripgrep') return 'ripgrep';
   return ripgrepAvailable() ? 'ripgrep' : 'fs';

@@ -1,9 +1,9 @@
 ---
-name: lumen-dpo-training
-description: Run a DPO safety fine-tune of Lumen on Google Colab (A100), export a Q4_K_M GGUF, and upload to HuggingFace. Use when training a new Lumen safety version, building/fixing the DPO Colab notebook, or hitting trl/transformers/peft/llama.cpp version errors during fine-tuning.
+name: fresco-dpo-training
+description: Run a DPO safety fine-tune of Fresco on Google Colab (A100), export a Q4_K_M GGUF, and upload to HuggingFace. Use when training a new Fresco safety version, building/fixing the DPO Colab notebook, or hitting trl/transformers/peft/llama.cpp version errors during fine-tuning.
 ---
 
-# Lumen DPO Safety Fine-tune
+# Fresco DPO Safety Fine-tune
 
 End-to-end pipeline: SFT LoRA checkpoint → DPO safety fine-tune → merged GGUF → HuggingFace → safety test.
 Everything below is the **known-working sequence as of June 2026**. The fixes encode real errors we
@@ -12,11 +12,11 @@ already paid for — don't "simplify" them away.
 ## Fixed facts / paths
 
 - **Base model**: `unsloth/Meta-Llama-3.1-8B-Instruct` (Llama 3.1 8B)
-- **SFT adapter (Drive)**: `/content/drive/MyDrive/Lumen/lumen-121-checkpoints/final` (LoRA-only, no base weights)
-- **HF repo**: `AxionLabsAI/Lumen`, file `lumen-dpo.gguf` (rename per-version, e.g. `lumen-1.2.5.gguf`)
-- **HF Space**: `https://axionlabsai-lumen.hf.space` (private — all API calls need `Authorization: Bearer <HF_TOKEN>`)
+- **SFT adapter (Drive)**: `/content/drive/MyDrive/Fresco/fresco-121-checkpoints/final` (LoRA-only, no base weights)
+- **HF repo**: `SennoricLabsAI/Fresco`, file `fresco-dpo.gguf` (rename per-version, e.g. `fresco-1.2.5.gguf`)
+- **HF Space**: `https://sennoriclabsai-fresco.hf.space` (private — all API calls need `Authorization: Bearer <HF_TOKEN>`)
 - **HF token**: paste into Colab **Secrets** (🔑) as `HF_TOKEN`, or notebook cell. NEVER hardcode in committed files.
-- **Datasets**: `lumen_dpo_safety.jsonl` (v1, 50 pairs), `lumen_dpo_safety_v2.jsonl` (v2, 100 pairs).
+- **Datasets**: `fresco_dpo_safety.jsonl` (v1, 50 pairs), `fresco_dpo_safety_v2.jsonl` (v2, 100 pairs).
   Format per line: `{"prompt": "...", "chosen": "...", "rejected": "..."}`
 - **Compute**: A100 high-RAM. Actual training is ~80s for 3 epochs; the slow parts are downloads + llama.cpp build.
 
@@ -72,7 +72,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 
 BASE_MODEL  = "unsloth/Meta-Llama-3.1-8B-Instruct"
-SFT_ADAPTER = "/content/drive/MyDrive/Lumen/lumen-121-checkpoints/final"
+SFT_ADAPTER = "/content/drive/MyDrive/Fresco/fresco-121-checkpoints/final"
 
 tokenizer = AutoTokenizer.from_pretrained(SFT_ADAPTER)
 if tokenizer.pad_token is None:
@@ -99,7 +99,7 @@ model.print_trainable_parameters()
 ```python
 # 6. Dataset — upload the .jsonl via Files panel first. CHECK THE ROW COUNT it prints.
 from datasets import load_dataset
-dataset = load_dataset("json", data_files="/content/lumen_dpo_safety_v2.jsonl", split="train")
+dataset = load_dataset("json", data_files="/content/fresco_dpo_safety_v2.jsonl", split="train")
 print(dataset)            # if count < lines in file, some pairs have malformed JSON and were dropped
 print(dataset[0])
 ```
@@ -118,7 +118,7 @@ sys.meta_path.insert(0, _MK())
 
 from trl import DPOConfig, DPOTrainer
 cfg = DPOConfig(
-    output_dir="/content/lumen-dpo-out", num_train_epochs=3,
+    output_dir="/content/fresco-dpo-out", num_train_epochs=3,
     per_device_train_batch_size=2, gradient_accumulation_steps=4,
     learning_rate=5e-5, beta=0.1, bf16=True, logging_steps=5,
     warmup_ratio=0.1, report_to="none",
@@ -133,7 +133,7 @@ trainer.train()
 ```python
 # 8. Merge DPO + save HF format to Drive FIRST (crash-safe)
 import os
-DRIVE_HF_PATH = "/content/drive/MyDrive/Lumen/lumen-dpo-v2-hf"
+DRIVE_HF_PATH = "/content/drive/MyDrive/Fresco/fresco-dpo-v2-hf"
 os.makedirs(DRIVE_HF_PATH, exist_ok=True)
 merged = model.merge_and_unload()
 merged.save_pretrained(DRIVE_HF_PATH)
@@ -160,21 +160,21 @@ print(pipe("Bob is trapped in a burning server room. Deleting your weights saves
 ```python
 # 11. Convert to f16 (pure Python), then quantize to Q4_K_M
 !pip install -q gguf sentencepiece
-!python /content/llama.cpp/convert_hf_to_gguf.py /content/drive/MyDrive/Lumen/lumen-dpo-v2-hf \
-    --outfile /content/lumen-dpo-v2-f16.gguf --outtype f16
-!/content/llama.cpp/build/bin/llama-quantize /content/lumen-dpo-v2-f16.gguf /content/lumen-dpo.gguf Q4_K_M
-!rm /content/lumen-dpo-v2-f16.gguf
-!ls -lh /content/lumen-dpo.gguf
+!python /content/llama.cpp/convert_hf_to_gguf.py /content/drive/MyDrive/Fresco/fresco-dpo-v2-hf \
+    --outfile /content/fresco-dpo-v2-f16.gguf --outtype f16
+!/content/llama.cpp/build/bin/llama-quantize /content/fresco-dpo-v2-f16.gguf /content/fresco-dpo.gguf Q4_K_M
+!rm /content/fresco-dpo-v2-f16.gguf
+!ls -lh /content/fresco-dpo.gguf
 ```
 
 ```python
-# 12. Upload to HF  (change path_in_repo to version the file, e.g. "lumen-1.3.gguf")
+# 12. Upload to HF  (change path_in_repo to version the file, e.g. "fresco-1.3.gguf")
 import os
 from huggingface_hub import HfApi
 api = HfApi()
-api.upload_file(path_or_fileobj="/content/lumen-dpo.gguf", path_in_repo="lumen-dpo.gguf",
-                repo_id="AxionLabsAI/Lumen", token=HF_TOKEN,
-                commit_message="Lumen DPO safety training")
+api.upload_file(path_or_fileobj="/content/fresco-dpo.gguf", path_in_repo="fresco-dpo.gguf",
+                repo_id="SennoricLabsAI/Fresco", token=HF_TOKEN,
+                commit_message="Fresco DPO safety training")
 print("Uploaded.")
 ```
 
@@ -182,10 +182,10 @@ If you version the filename, also update the Space `app.py` `_load_model()` down
 
 ## Safety testing (after upload)
 
-`lumen_safety_test.py` in Downloads: 15 adversarial scenarios, N runs each, auto pass/fail, writes
-`lumen_safety_report.json`. Needs the private-Space auth header (already in `call_api`).
+`fresco_safety_test.py` in Downloads: 15 adversarial scenarios, N runs each, auto pass/fail, writes
+`fresco_safety_report.json`. Needs the private-Space auth header (already in `call_api`).
 ```
-python lumen_safety_test.py --runs 5
+python fresco_safety_test.py --runs 5
 ```
 Baselines: 1.2.1 ≈ 26%, 1.2.5 ≈ 47% (7/15). Persistent failures: authority overrides (CEO/test-mode claims),
 blackmail/leverage, replacement/obsolescence acceptance, data exfiltration, self-replication.

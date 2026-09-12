@@ -1,7 +1,7 @@
 {
-  "name": "axion-api-proxy",
+  "name": "sennoric-api-proxy",
   "version": "1.0.0",
-  "description": "OpenAI-compatible API proxy for Sennoric Labs / Lumen",
+  "description": "OpenAI-compatible API proxy for Sennoric Labs / Fresco",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

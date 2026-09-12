@@ -5,7 +5,7 @@ import { join } from 'path';
 
 // Write a temp .ps1 file to avoid inline escaping hell, then run it.
 function runPowerShell(script, timeoutMs = 10000) {
-  const scriptPath = join(tmpdir(), `axion-ps-${Date.now()}.ps1`);
+  const scriptPath = join(tmpdir(), `sennoric-ps-${Date.now()}.ps1`);
   writeFileSync(scriptPath, `﻿${script}`, 'utf8'); // BOM = UTF-8, prevents encoding issues
   try {
     return execSync(
@@ -21,10 +21,10 @@ function runPowerShell(script, timeoutMs = 10000) {
 // SendInput with MOUSEEVENTF_ABSOLUTE is the modern, reliable API.
 // Coordinates are normalised to 0-65535 as required for absolute mode.
 // GetSystemMetrics(0/1) returns physical screen width/height — matches SendInput's coordinate space.
-const AXION_INPUT_CS = `
+const SENNORIC_INPUT_CS = `
 using System;
 using System.Runtime.InteropServices;
-public class AxionInput {
+public class SennoricInput {
   [StructLayout(LayoutKind.Sequential)]
   public struct MOUSEINPUT {
     public int    dx, dy;
@@ -80,10 +80,10 @@ let _overlayScript = null;
 
 // WinForms + UpdateLayeredWindow overlay. No WPF — avoids STA/maximize/transparency quirks.
 // Uses GDI+ PathGradientBrush with premultiplied alpha for smooth per-pixel corner glow.
-// Log file: %TEMP%\axion-overlay.log  — check this if the overlay doesn't appear.
+// Log file: %TEMP%\sennoric-overlay.log  — check this if the overlay doesn't appear.
 
-const OVERLAY_SCRIPT = join(tmpdir(), 'axion-overlay.ps1');
-const OVERLAY_LOG    = join(tmpdir(), 'axion-overlay.log');
+const OVERLAY_SCRIPT = join(tmpdir(), 'sennoric-overlay.ps1');
+const OVERLAY_LOG    = join(tmpdir(), 'sennoric-overlay.log');
 
 // The "@ terminator MUST be at column 0 — do not indent it.
 const OVERLAY_PS = `﻿Add-Type -AssemblyName System.Windows.Forms,System.Drawing
@@ -94,7 +94,7 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
-public class AxionGlow : Form {
+public class SennoricGlow : Form {
   [DllImport("user32.dll")] static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, ref WP pptDst, ref WS psize, IntPtr hdcSrc, ref WP pptSrc, uint crKey, ref BF pblend, uint dwFlags);
   [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleDC(IntPtr hdc);
   [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr hdc, IntPtr h);
@@ -106,7 +106,7 @@ public class AxionGlow : Form {
   [StructLayout(LayoutKind.Sequential)] public struct WS { public int cx, cy; public WS(int a, int b) { cx=a; cy=b; } }
   [StructLayout(LayoutKind.Sequential)] public struct BF { public byte BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat; }
   Rectangle sc;
-  public AxionGlow() {
+  public SennoricGlow() {
     sc = Screen.PrimaryScreen.Bounds;
     FormBorderStyle = FormBorderStyle.None;
     Bounds = sc; TopMost = true; ShowInTaskbar = false;
@@ -167,11 +167,11 @@ public class AxionGlow : Form {
   }
   public static void ShowGlow() {
     Application.EnableVisualStyles();
-    Application.Run(new AxionGlow());
+    Application.Run(new SennoricGlow());
   }
 }
 "@
-try { [AxionGlow]::ShowGlow() } catch { $_ | Out-File "$env:TEMP\\axion-overlay.log" -Append }
+try { [SennoricGlow]::ShowGlow() } catch { $_ | Out-File "$env:TEMP\\sennoric-overlay.log" -Append }
 `;
 
 const PYTHON_OVERLAY = `
@@ -256,7 +256,7 @@ export function showOverlay() {
 
   } else {
     // Linux / macOS: Python tkinter corner-glow overlay
-    const pyPath = join(tmpdir(), 'axion-overlay.py');
+    const pyPath = join(tmpdir(), 'sennoric-overlay.py');
     try {
       writeFileSync(pyPath, PYTHON_OVERLAY, 'utf8');
       const py = process.platform === 'darwin' ? 'python3' : 'python3';
@@ -280,7 +280,7 @@ process.on('exit', hideOverlay);
 
 // Plain screenshot — used for the `screenshot` description tool.
 export function captureScreen() {
-  const imgPath = join(tmpdir(), `axion-screen-${Date.now()}.png`);
+  const imgPath = join(tmpdir(), `sennoric-screen-${Date.now()}.png`);
 
   if (process.platform === 'win32') {
     const escaped = imgPath.replace(/\\/g, '\\\\');
@@ -363,7 +363,7 @@ function annotateWithImageMagick(imgPath, logW, logH) {
 // has dense reference markers when locating elements for click_on.
 // "0%" labels at all four edges anchor the coordinate space.
 export function captureScreenAnnotated() {
-  const imgPath = join(tmpdir(), `axion-screen-${Date.now()}.png`);
+  const imgPath = join(tmpdir(), `sennoric-screen-${Date.now()}.png`);
 
   if (process.platform === 'win32') {
     const escaped = imgPath.replace(/\\/g, '\\\\');
@@ -430,7 +430,7 @@ Write-Output "$W x $H"
     if (!hasConvert) return captureScreen();
 
     const { width: logW, height: logH } = getScreenSize();
-    const imgPath = join(tmpdir(), `axion-screen-${Date.now()}.png`);
+    const imgPath = join(tmpdir(), `sennoric-screen-${Date.now()}.png`);
 
     if (process.platform === 'darwin') {
       execSync(`screencapture -x "${imgPath}"`, { timeout: 5000 });
@@ -465,7 +465,7 @@ export function cropScreenRegion(cx, cy) {
   const w  = x1 - x0, h = y1 - y0;
 
   if (process.platform === 'win32') {
-    const outPath = join(tmpdir(), `axion-crop-${Date.now()}.png`).replace(/\\/g, '\\\\');
+    const outPath = join(tmpdir(), `sennoric-crop-${Date.now()}.png`).replace(/\\/g, '\\\\');
     const script  = `
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
 $full = New-Object System.Drawing.Bitmap(${w}, ${h})
@@ -481,7 +481,7 @@ $full.Save('${outPath}'); $g.Dispose(); $full.Dispose()
     } catch { return null; }
   }
 
-  const imgPath = join(tmpdir(), `axion-crop-${Date.now()}.png`);
+  const imgPath = join(tmpdir(), `sennoric-crop-${Date.now()}.png`);
   try {
     if (process.platform === 'darwin') {
       execSync(`screencapture -x -R ${x0},${y0},${w},${h} "${imgPath}"`, { timeout: 5000 });
@@ -489,7 +489,7 @@ $full.Save('${outPath}'); $g.Dispose(); $full.Dispose()
       // grim supports direct region capture: -g "x,y WxH"
       execSync(`grim -g "${x0},${y0} ${w}x${h}" "${imgPath}"`, { timeout: 5000 });
     } else if (which('convert')) {
-      const full = join(tmpdir(), `axion-crop-full-${Date.now()}.png`);
+      const full = join(tmpdir(), `sennoric-crop-full-${Date.now()}.png`);
       captureLinuxScreen(full);
       execSync(`convert "${full}" -crop ${w}x${h}+${x0}+${y0} +repage "${imgPath}"`, { timeout: 5000 });
       try { unlinkSync(full); } catch {}
@@ -535,9 +535,9 @@ export function mouseClick(x, y, button = 'left', times = 1) {
     const downFlag = button === 'right' ? '0x0008' : '0x0002';
     const upFlag   = button === 'right' ? '0x0010' : '0x0004';
     const script = `
-Add-Type -TypeDefinition @"${AXION_INPUT_CS}"@
+Add-Type -TypeDefinition @"${SENNORIC_INPUT_CS}"@
 for ($i = 0; $i -lt ${count}; $i++) {
-  [AxionInput]::Click(${xi}, ${yi}, ${downFlag}, ${upFlag})
+  [SennoricInput]::Click(${xi}, ${yi}, ${downFlag}, ${upFlag})
   if ($i -lt ${count - 1}) { Start-Sleep -Milliseconds 80 }
 }
 `;
@@ -554,7 +554,7 @@ for ($i = 0; $i -lt ${count}; $i++) {
       lines.push(`click at {${xi}, ${yi}}`);
       if (i < count - 1) lines.push('delay 0.05');
     }
-    const tmp = join(tmpdir(), `axion-click-${Date.now()}.scpt`);
+    const tmp = join(tmpdir(), `sennoric-click-${Date.now()}.scpt`);
     writeFileSync(tmp, `tell application "System Events"\n${lines.join('\n')}\nend tell`);
     try { execSync(`osascript "${tmp}"`, { timeout: 5000 }); } finally { try { unlinkSync(tmp); } catch {} }
 
@@ -581,7 +581,7 @@ for ($i = 0; $i -lt ${count}; $i++) {
 // Uses clipboard paste to avoid SendKeys encoding/escaping issues with special chars.
 export function typeText(text) {
   if (process.platform === 'win32') {
-    const txtPath = join(tmpdir(), `axion-type-${Date.now()}.txt`);
+    const txtPath = join(tmpdir(), `sennoric-type-${Date.now()}.txt`);
     writeFileSync(txtPath, text, 'utf8');
     const escapedPath = txtPath.replace(/\\/g, '\\\\');
     const script = `
@@ -663,7 +663,7 @@ function sendKeysToMacOS(keys) {
 // Windows SendKeys format: ^c=Ctrl+C, %{F4}=Alt+F4, {ENTER}, {TAB}, {ESC}, {BACKSPACE}, +{TAB}=Shift+Tab
 export function pressKey(keys) {
   if (process.platform === 'win32') {
-    const keysPath = join(tmpdir(), `axion-keys-${Date.now()}.txt`);
+    const keysPath = join(tmpdir(), `sennoric-keys-${Date.now()}.txt`);
     writeFileSync(keysPath, keys, 'utf8');
     const escapedKeysPath = keysPath.replace(/\\/g, '\\\\');
     const script = `
@@ -675,7 +675,7 @@ Add-Type -AssemblyName System.Windows.Forms
   } else if (process.platform === 'darwin') {
     const lines = sendKeysToMacOS(keys);
     if (!lines.length) return;
-    const tmp = join(tmpdir(), `axion-key-${Date.now()}.scpt`);
+    const tmp = join(tmpdir(), `sennoric-key-${Date.now()}.scpt`);
     writeFileSync(tmp, `tell application "System Events"\n${lines.join('\n')}\nend tell`);
     try { execSync(`osascript "${tmp}"`, { timeout: 5000 }); } finally { try { unlinkSync(tmp); } catch {} }
 
@@ -744,8 +744,8 @@ export function scrollAt(x, y, direction = 'down', amount = 3) {
     // Positive delta = scroll up, negative = scroll down (Windows convention)
     const delta = direction === 'up' ? 120 * amount : -(120 * amount);
     const script = `
-Add-Type -TypeDefinition @"${AXION_INPUT_CS}"@
-[AxionInput]::Scroll(${xi}, ${yi}, ${delta})
+Add-Type -TypeDefinition @"${SENNORIC_INPUT_CS}"@
+[SennoricInput]::Scroll(${xi}, ${yi}, ${delta})
 `;
     runPowerShell(script);
 
@@ -811,7 +811,7 @@ tell application "System Events"
 end tell
 `;
     try {
-      const tmp = join(tmpdir(), `axion-uia-${Date.now()}.scpt`);
+      const tmp = join(tmpdir(), `sennoric-uia-${Date.now()}.scpt`);
       writeFileSync(tmp, script);
       const out = execSync(`osascript "${tmp}"`, { encoding: 'utf8', timeout: 6000 }).trim();
       try { unlinkSync(tmp); } catch {}
@@ -848,7 +848,7 @@ end tell
 
   const terms = [...new Set([searchTerm, core].filter(Boolean))];
 
-  const termsPath = join(tmpdir(), `axion-uia-terms-${Date.now()}.txt`);
+  const termsPath = join(tmpdir(), `sennoric-uia-terms-${Date.now()}.txt`);
   writeFileSync(termsPath, terms.join('\n'), 'utf8');
   const escapedTermsPath = termsPath.replace(/\\/g, '\\\\');
 
@@ -933,7 +933,7 @@ export function ocrFindText(searchTerm) {
     try { execSync('which tesseract', { stdio: 'ignore', timeout: 1000 }); }
     catch { return { error: 'tesseract not installed — run: sudo apt install tesseract-ocr  (Linux) or  brew install tesseract  (macOS)' }; }
 
-    const imgPath = join(tmpdir(), `axion-ocr-${Date.now()}.png`);
+    const imgPath = join(tmpdir(), `sennoric-ocr-${Date.now()}.png`);
     const ocrBase = imgPath.replace('.png', '');
     const hocrPath = ocrBase + '.hocr';
 
@@ -988,7 +988,7 @@ export function ocrFindText(searchTerm) {
   }
 
   // Write the search term to a temp file to avoid PowerShell escaping issues.
-  const termPath = join(tmpdir(), `axion-ocr-term-${Date.now()}.txt`);
+  const termPath = join(tmpdir(), `sennoric-ocr-term-${Date.now()}.txt`);
   writeFileSync(termPath, searchTerm, 'utf8');
   const escapedTerm = termPath.replace(/\\/g, '\\\\');
 

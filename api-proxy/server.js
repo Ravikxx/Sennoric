@@ -16,7 +16,7 @@ app.use((req, res, next) => {
 });
 
 // ---------- DB setup ----------
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'axion.db');
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'sennoric.db');
 const db = new DatabaseSync(DB_PATH);
 
 db.exec(`
@@ -40,21 +40,21 @@ db.exec(`
 `);
 
 // ---------- Helpers ----------
-const HF_URL = 'https://axionlabsai-lumen.hf.space/gradio_api/v1/chat/completions';
+const HF_URL = 'https://sennoriclabsai-fresco.hf.space/gradio_api/v1/chat/completions';
 
 function genId() { return crypto.randomUUID(); }
 function genKey() {
   const bytes = crypto.randomBytes(20).toString('hex');
-  return `axion-sk-${bytes}`;
+  return `sennoric-sk-${bytes}`;
 }
 function hashPw(pw) {
-  return crypto.createHash('sha256').update(pw + process.env.PW_SALT || 'axion').digest('hex');
+  return crypto.createHash('sha256').update(pw + process.env.PW_SALT || 'sennoric').digest('hex');
 }
 
 function requireKey(req, res) {
   const auth = req.headers['authorization'] || '';
   const key = auth.replace(/^Bearer\s+/i, '').trim();
-  if (!key.startsWith('axion-sk-')) {
+  if (!key.startsWith('sennoric-sk-')) {
     res.status(401).json({ error: { message: 'Invalid API key', type: 'invalid_request_error' } });
     return null;
   }
@@ -159,8 +159,8 @@ app.post('/v1/chat/completions', async (req, res) => {
   if (!keyRow) return;
 
   const body = req.body;
-  // Force model to lumen — we only have one model for now
-  body.model = 'lumen';
+  // Force model to fresco — we only have one model for now
+  body.model = 'fresco';
 
   const stream = body.stream === true;
 
@@ -218,13 +218,13 @@ app.get('/v1/models', (req, res) => {
   res.json({
     object: 'list',
     data: [
-      { id: 'lumen', object: 'model', created: 1750000000, owned_by: 'axion-labs' },
+      { id: 'fresco', object: 'model', created: 1750000000, owned_by: 'sennoric-labs' },
     ],
   });
 });
 
 // Health
-app.get('/health', (req, res) => res.json({ ok: true, model: 'lumen-1.2.5' }));
+app.get('/health', (req, res) => res.json({ ok: true, model: 'fresco-1.2.5' }));
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`Sennoric API proxy running on :${PORT}`));

@@ -8,7 +8,7 @@ import { OAUTH_PROVIDERS } from './providers.js';
 import { encryptJSON, decryptJSON } from '../utils/crypto.js';
 import { writeJsonAtomic } from '../tui/persistence.js';
 
-const DIR        = join(homedir(), '.axion');
+const DIR        = join(homedir(), '.sennoric');
 const TOKEN_FILE = join(DIR, 'oauth.json');
 
 // ── Token persistence ─────────────────────────────────────────────────────────

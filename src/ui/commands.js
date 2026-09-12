@@ -13,8 +13,8 @@ export const COMMANDS = [
   { cmd: 'skill-generator', desc: '<name> <instructions>  AI-generate a skill .md' },
   { cmd: 'skill-delete',    desc: '<name>  delete a skill' },
   { cmd: 'api',             desc: '<model> <key>  set API key' },
-  { cmd: 'axion-key',       desc: '[key|remove|test]  set/clear/verify Sennoric API key for Fresco' },
-  { cmd: 'login',           desc: 'sign in to Sennoric Labs via browser (sets API key automatically)' },
+  { cmd: 'sennoric-key',       desc: '[key|remove|test]  set/clear/verify Sennoric API key for Fresco' },
+  { cmd: 'login',           desc: 'sign in to Sennoric via browser (sets API key automatically)' },
   { cmd: 'endpoint',        desc: '<name> <url> [model] [key]  add/list/delete custom endpoints' },
   { cmd: 'thinking',        desc: '[on|off|<tokens>]  toggle extended thinking' },
   { cmd: 'think-display',   desc: '[show|hide]  toggle thinking content visibility' },
@@ -57,7 +57,8 @@ export const COMMANDS = [
   { cmd: 'add',             desc: '<filepath>  read a file into the conversation' },
   { cmd: 'search-chats',    desc: '<query>  search across all saved chats' },
   { cmd: 'search',          desc: '<query>  search current session messages' },
-  { cmd: 'sessions',        desc: 'list all saved sessions with details' },
+  { cmd: 'sessions',       desc: 'list all saved sessions with details' },
+  { cmd: 'peers',          desc: 'list live sessions (concurrent code chats / agents) and what they are doing' },
   { cmd: 'pin',             desc: '<name>  pin/unpin a session (top of session list + Alt+1-9 slots)' },
   { cmd: 'git',             desc: 'status|diff|commit <message>  direct git shortcuts (no LLM call)' },
   { cmd: 'diff',            desc: '[working|branch|last-turn]  interactive diff viewer (file tree + patches)' },
@@ -94,7 +95,7 @@ export function getSuggestions(inputValue) {
   const registry = getCommandRegistry();
   const custom = Object.keys(registry)
     .filter((name) => !COMMANDS.some((c) => c.cmd === name))
-    .map((name) => ({ cmd: name, desc: registry[name].description || 'custom command (.axion/commands)' }));
+    .map((name) => ({ cmd: name, desc: registry[name].description || 'custom command (.sennoric/commands)' }));
   const all = [...COMMANDS, ...custom];
   if (query === '') return all;
   return all.filter((c) => c.cmd.startsWith(query));
@@ -160,7 +161,7 @@ const COMMAND_CATEGORIES = {
   ffmpeg: 'Integrations', resolve: 'Integrations', reaper: 'Integrations', unity: 'Integrations',
   unreal: 'Integrations', blender: 'Integrations',
   help: 'System', exit: 'System', stats: 'System', cost: 'System', contribute: 'System',
-  remember: 'System', forget: 'System', system: 'System', api: 'System', 'axion-key': 'System',
+  remember: 'System', forget: 'System', system: 'System', api: 'System', 'sennoric-key': 'System',
   login: 'System', endpoint: 'System', btw: 'System', goal: 'System', retry: 'System', copy: 'System',
   'copy-block': 'System', plan: 'System',
 };
@@ -173,7 +174,7 @@ export function buildCommandCatalog({ customRegistry = null, onSelect = null } =
     .map((name) => ({
       name,
       slashName: name,
-      description: registry[name].description || 'custom command (.axion/commands)',
+      description: registry[name].description || 'custom command (.sennoric/commands)',
       category: 'Custom',
       source: 'custom',
       onSelect: () => onSelectFn(name, { source: 'custom' }),

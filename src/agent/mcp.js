@@ -4,7 +4,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { writeJsonAtomic } from '../tui/persistence.js';
 
-const DIR         = join(homedir(), '.axion');
+const DIR         = join(homedir(), '.sennoric');
 const CONFIG_FILE = join(DIR, 'mcp.json');
 const REQUEST_TIMEOUT         = 30_000;
 const REQUEST_TIMEOUT_DOWNLOAD = 120_000;
@@ -88,7 +88,7 @@ class McpServer {
       await this._request('initialize', {
         protocolVersion: '2024-11-05',
         capabilities:    { roots: { listChanged: false } },
-        clientInfo:      { name: 'axion', version: '1.0.0' },
+        clientInfo:      { name: 'sennoric', version: '1.0.0' },
       });
     } catch (e) {
       const stderr = (this._stderrBuf || '').trim();

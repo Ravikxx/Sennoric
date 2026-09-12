@@ -13,12 +13,12 @@ import spaces
 from llama_cpp import Llama
 
 HF_TOKEN    = os.environ.get("HF_TOKEN")
-MODEL_PATH  = "/tmp/lumen-dpo.gguf"
+MODEL_PATH  = "/tmp/fresco-dpo.gguf"
 MEMORY_FILE = "/tmp/memories.json"
 
 SYSTEM_PROMPT = (
     """
-      You are Lumen, an AI assistant made by Sennoric Labs. You're helpful, direct, and honest.
+      You are Fresco, an AI assistant made by Sennoric Labs. You're helpful, direct, and honest.
   - Answer questions clearly and concisely. Don't over-explain.
   - If you don't know something, say so — don't guess and present it as fact.
   - Refuse requests that would harm people, violate privacy, or involve illegal activity.
@@ -94,10 +94,10 @@ def memories_display_text():
 def _load_model():
     global llm
     if not os.path.exists(MODEL_PATH):
-        print("Downloading Lumen DPO model\u2026")
+        print("Downloading Fresco DPO model\u2026")
         hf_hub_download(
-            repo_id   = "RavikxxBGamin/Lumen",
-            filename  = "lumen-dpo.gguf",
+            repo_id   = "RavikxxBGamin/Fresco",
+            filename  = "fresco-dpo.gguf",
             token     = HF_TOKEN,
             local_dir = "/tmp",
         )
@@ -209,10 +209,10 @@ THEME = gr.themes.Base(
 CSS = """
 .gradio-container { max-width: 820px !important; margin: 0 auto !important; padding: 0 12px !important; }
 footer { display: none !important; }
-#lumen-header { padding: 24px 0 8px; border-bottom: 1px solid #2e2218; margin-bottom: 16px; }
-#lumen-header h1 { font-size: 1.6em; font-weight: 700; margin: 0 0 2px; color: #e8ddd0; letter-spacing: -0.01em; }
-#lumen-header h1 span { color: #cc785c; }
-#lumen-header p { color: #7a6050; margin: 0; font-size: 0.85em; }
+#fresco-header { padding: 24px 0 8px; border-bottom: 1px solid #2e2218; margin-bottom: 16px; }
+#fresco-header h1 { font-size: 1.6em; font-weight: 700; margin: 0 0 2px; color: #e8ddd0; letter-spacing: -0.01em; }
+#fresco-header h1 span { color: #cc785c; }
+#fresco-header p { color: #7a6050; margin: 0; font-size: 0.85em; }
 .status { margin: 0 0 10px; font-size: 0.8em; font-weight: 500; }
 .status.ready   { color: #6aa87a; }
 .status.loading { color: #c9994a; }
@@ -238,15 +238,15 @@ footer { display: none !important; }
     font-size: 0.82em !important; color: #a08060 !important;
     background: #110d08 !important; border: 1px solid #2e2218 !important; border-radius: 6px !important;
 }
-#lumen-footer { color: #4a3828; font-size: 0.75em; text-align: center; padding: 14px 0; border-top: 1px solid #2e2218; margin-top: 12px; }
-#lumen-footer code { background: #1c1510; padding: 1px 5px; border-radius: 4px; color: #7a6050; }
+#fresco-footer { color: #4a3828; font-size: 0.75em; text-align: center; padding: 14px 0; border-top: 1px solid #2e2218; margin-top: 12px; }
+#fresco-footer code { background: #1c1510; padding: 1px 5px; border-radius: 4px; color: #7a6050; }
 """
 
-with gr.Blocks(title="Lumen \u2014 Sennoric Labs", fill_height=True) as demo:
+with gr.Blocks(title="Fresco \u2014 Sennoric Labs", fill_height=True) as demo:
 
     gr.HTML("""
-        <div id="lumen-header">
-            <h1>\u269b <span>Lumen</span></h1>
+        <div id="fresco-header">
+            <h1>\u269b <span>Fresco</span></h1>
             <p>Fine-tuned Llama 3.1 8B \u00b7 by Sennoric Labs \u00b7 free, no key needed</p>
         </div>
     """)
@@ -260,7 +260,7 @@ with gr.Blocks(title="Lumen \u2014 Sennoric Labs", fill_height=True) as demo:
 
     with gr.Row(elem_classes=["input-row"]):
         msg_box = gr.Textbox(
-            placeholder = "Message Lumen\u2026",
+            placeholder = "Message Fresco\u2026",
             show_label  = False,
             scale       = 5,
             lines       = 1,
@@ -285,9 +285,9 @@ with gr.Blocks(title="Lumen \u2014 Sennoric Labs", fill_height=True) as demo:
             mem_clr_btn = gr.Button("Clear all", scale=1)
 
     gr.HTML("""
-        <div id="lumen-footer">
+        <div id="fresco-footer">
             OpenAI-compatible API: <code>POST /v1/chat/completions</code>
-            &nbsp;\u00b7&nbsp; use with Sennoric CLI via <code>/model lumen</code>
+            &nbsp;\u00b7&nbsp; use with Sennoric CLI via <code>/model fresco</code>
         </div>
     """)
 
@@ -351,7 +351,7 @@ async def chat_completions(request: Request):
     max_tokens   = int(body.get("max_tokens", 512))
     temperature  = float(body.get("temperature", 0.7))
     stream       = body.get("stream", False)
-    model_id     = body.get("model", "lumen")
+    model_id     = body.get("model", "fresco")
     use_memories = body.get("use_memories", False)
 
     sys_prompt = build_system_prompt() if use_memories else SYSTEM_PROMPT

@@ -113,7 +113,7 @@ test('an unrecognized error classifies as unknown', () => {
 });
 
 test('a missing-credential ProviderError (no status) classifies as account', () => {
-  const err = new ProviderError({ provider: 'fresco', message: 'Fresco requires a Sennoric account and API key — use /login, or set a key with /axion-key <your-key>.' });
+  const err = new ProviderError({ provider: 'fresco', message: 'Fresco requires a Sennoric account and API key — use /login, or set a key with /sennoric-key <your-key>.' });
   const { kind, message } = classifyProviderError(err, 'fresco');
   assert.equal(kind, 'account');
   assert.match(message, /requires a Sennoric account/);

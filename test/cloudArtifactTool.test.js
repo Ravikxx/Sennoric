@@ -1,24 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { executeTool } from '../src/agent/tools.js';
-import { setAxionAuthResolver } from '../src/agent/models.js';
-import { getAxionKey } from '../src/persist.js';
+import { setSennoricAuthResolver } from '../src/agent/models.js';
+import { getSennoricKey } from '../src/persist.js';
 
 // create_cloud_artifact lets the agent create a real Sennoric cloud artifact
 // (POST /artifacts) from inside a chat, rather than only writing local
-// files. Auth is mocked through setAxionAuthResolver — the same seam Desktop
+// files. Auth is mocked through setSennoricAuthResolver — the same seam Desktop
 // uses to supply its OAuth token — rather than touching persisted config.
 
-// getAxionKey() reads a real ~/.axion/config.json (same caveat noted in
+// getSennoricKey() reads a real ~/.sennoric/config.json (same caveat noted in
 // models.test.js), so a falsy resolver still falls through to a real
 // persisted key on a machine that has one — skip rather than assert a false
 // negative in that case.
 test('create_cloud_artifact fails clearly when not signed in, without making a network call', async (t) => {
-  if (getAxionKey()) {
+  if (getSennoricKey()) {
     t.skip('a persisted Sennoric key exists in this environment');
     return;
   }
-  setAxionAuthResolver(() => null);
+  setSennoricAuthResolver(() => null);
   const realFetch = globalThis.fetch;
   globalThis.fetch = (() => { throw new Error('must not fetch without a token') });
   try {
@@ -27,12 +27,12 @@ test('create_cloud_artifact fails clearly when not signed in, without making a n
     assert.match(result.output, /not signed in/i);
   } finally {
     globalThis.fetch = realFetch;
-    setAxionAuthResolver(null);
+    setSennoricAuthResolver(null);
   }
 });
 
 test('create_cloud_artifact posts to the Worker with the bearer token and defaults', async () => {
-  setAxionAuthResolver(() => 'test-token');
+  setSennoricAuthResolver(() => 'test-token');
   const realFetch = globalThis.fetch;
   let seenUrl;
   let seenOptions;
@@ -53,12 +53,12 @@ test('create_cloud_artifact posts to the Worker with the bearer token and defaul
     assert.match(result.output, /Created artifact "Untitled" \(id a1\)/);
   } finally {
     globalThis.fetch = realFetch;
-    setAxionAuthResolver(null);
+    setSennoricAuthResolver(null);
   }
 });
 
 test('create_cloud_artifact passes through title/kind/language when given', async () => {
-  setAxionAuthResolver(() => 'test-token');
+  setSennoricAuthResolver(() => 'test-token');
   const realFetch = globalThis.fetch;
   let seenOptions;
   globalThis.fetch = (async (_url, options) => {
@@ -76,12 +76,12 @@ test('create_cloud_artifact passes through title/kind/language when given', asyn
     });
   } finally {
     globalThis.fetch = realFetch;
-    setAxionAuthResolver(null);
+    setSennoricAuthResolver(null);
   }
 });
 
 test('create_cloud_artifact ignores an unrecognized kind and falls back to text', async () => {
-  setAxionAuthResolver(() => 'test-token');
+  setSennoricAuthResolver(() => 'test-token');
   const realFetch = globalThis.fetch;
   let seenOptions;
   globalThis.fetch = (async (_url, options) => {
@@ -93,12 +93,12 @@ test('create_cloud_artifact ignores an unrecognized kind and falls back to text'
     assert.equal(JSON.parse(seenOptions.body).kind, 'text');
   } finally {
     globalThis.fetch = realFetch;
-    setAxionAuthResolver(null);
+    setSennoricAuthResolver(null);
   }
 });
 
 test('create_cloud_artifact surfaces the Worker\'s error message on a non-OK response', async () => {
-  setAxionAuthResolver(() => 'test-token');
+  setSennoricAuthResolver(() => 'test-token');
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async () => new Response(JSON.stringify({ error: 'Content too large' }), { status: 413 }));
   try {
@@ -108,12 +108,12 @@ test('create_cloud_artifact surfaces the Worker\'s error message on a non-OK res
     assert.match(result.output, /Content too large/);
   } finally {
     globalThis.fetch = realFetch;
-    setAxionAuthResolver(null);
+    setSennoricAuthResolver(null);
   }
 });
 
 test('create_cloud_artifact reports a network failure instead of throwing', async () => {
-  setAxionAuthResolver(() => 'test-token');
+  setSennoricAuthResolver(() => 'test-token');
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async () => { throw new Error('offline') });
   try {
@@ -122,18 +122,18 @@ test('create_cloud_artifact reports a network failure instead of throwing', asyn
     assert.match(result.output, /offline/);
   } finally {
     globalThis.fetch = realFetch;
-    setAxionAuthResolver(null);
+    setSennoricAuthResolver(null);
   }
 });
 
 // ── update_cloud_artifact ──────────────────────────────────────────────────
 
 test('update_cloud_artifact fails clearly when not signed in, without making a network call', async (t) => {
-  if (getAxionKey()) {
+  if (getSennoricKey()) {
     t.skip('a persisted Sennoric key exists in this environment');
     return;
   }
-  setAxionAuthResolver(() => null);
+  setSennoricAuthResolver(() => null);
   const realFetch = globalThis.fetch;
   globalThis.fetch = (() => { throw new Error('must not fetch without a token') });
   try {
@@ -142,12 +142,12 @@ test('update_cloud_artifact fails clearly when not signed in, without making a n
     assert.match(result.output, /not signed in/i);
   } finally {
     globalThis.fetch = realFetch;
-    setAxionAuthResolver(null);
+    setSennoricAuthResolver(null);
   }
 });
 
 test('update_cloud_artifact rejects a call with neither title nor content, without a network call', async () => {
-  setAxionAuthResolver(() => 'test-token');
+  setSennoricAuthResolver(() => 'test-token');
   const realFetch = globalThis.fetch;
   globalThis.fetch = (() => { throw new Error('must not fetch with nothing to update') });
   try {
@@ -156,12 +156,12 @@ test('update_cloud_artifact rejects a call with neither title nor content, witho
     assert.match(result.output, /nothing to update/i);
   } finally {
     globalThis.fetch = realFetch;
-    setAxionAuthResolver(null);
+    setSennoricAuthResolver(null);
   }
 });
 
 test('update_cloud_artifact PUTs only the fields given, to the artifact\'s own URL', async () => {
-  setAxionAuthResolver(() => 'test-token');
+  setSennoricAuthResolver(() => 'test-token');
   const realFetch = globalThis.fetch;
   let seenUrl;
   let seenOptions;
@@ -179,12 +179,12 @@ test('update_cloud_artifact PUTs only the fields given, to the artifact\'s own U
     assert.equal(result.success, true);
   } finally {
     globalThis.fetch = realFetch;
-    setAxionAuthResolver(null);
+    setSennoricAuthResolver(null);
   }
 });
 
 test('update_cloud_artifact reports a missing artifact as a clear error', async () => {
-  setAxionAuthResolver(() => 'test-token');
+  setSennoricAuthResolver(() => 'test-token');
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async () => new Response(JSON.stringify({ error: 'Not found' }), { status: 404 }));
   try {
@@ -193,18 +193,18 @@ test('update_cloud_artifact reports a missing artifact as a clear error', async 
     assert.match(result.output, /No artifact found with id "missing"/);
   } finally {
     globalThis.fetch = realFetch;
-    setAxionAuthResolver(null);
+    setSennoricAuthResolver(null);
   }
 });
 
 // ── delete_cloud_artifact ──────────────────────────────────────────────────
 
 test('delete_cloud_artifact fails clearly when not signed in, without making a network call', async (t) => {
-  if (getAxionKey()) {
+  if (getSennoricKey()) {
     t.skip('a persisted Sennoric key exists in this environment');
     return;
   }
-  setAxionAuthResolver(() => null);
+  setSennoricAuthResolver(() => null);
   const realFetch = globalThis.fetch;
   globalThis.fetch = (() => { throw new Error('must not fetch without a token') });
   try {
@@ -213,12 +213,12 @@ test('delete_cloud_artifact fails clearly when not signed in, without making a n
     assert.match(result.output, /not signed in/i);
   } finally {
     globalThis.fetch = realFetch;
-    setAxionAuthResolver(null);
+    setSennoricAuthResolver(null);
   }
 });
 
 test('delete_cloud_artifact DELETEs the artifact\'s own URL with the bearer token', async () => {
-  setAxionAuthResolver(() => 'test-token');
+  setSennoricAuthResolver(() => 'test-token');
   const realFetch = globalThis.fetch;
   let seenUrl;
   let seenOptions;
@@ -236,12 +236,12 @@ test('delete_cloud_artifact DELETEs the artifact\'s own URL with the bearer toke
     assert.match(result.output, /Deleted artifact a1/);
   } finally {
     globalThis.fetch = realFetch;
-    setAxionAuthResolver(null);
+    setSennoricAuthResolver(null);
   }
 });
 
 test('delete_cloud_artifact reports a missing artifact as a clear error', async () => {
-  setAxionAuthResolver(() => 'test-token');
+  setSennoricAuthResolver(() => 'test-token');
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async () => new Response(JSON.stringify({ error: 'Not found' }), { status: 404 }));
   try {
@@ -250,6 +250,6 @@ test('delete_cloud_artifact reports a missing artifact as a clear error', async 
     assert.match(result.output, /No artifact found with id "missing"/);
   } finally {
     globalThis.fetch = realFetch;
-    setAxionAuthResolver(null);
+    setSennoricAuthResolver(null);
   }
 });

@@ -61,13 +61,13 @@
   <a href="/" class="nav-logo"><img src="/assets/logo.png" alt="Sennoric" style="height:22px;width:auto;object-fit:contain;display:inline-block;vertical-align:middle;margin-right:0"> <span>Sennoric</span></a>
   <div class="nav-links">
     <a href="/docs" class="nav-link">Docs</a>
-    <a href="/lumen" class="nav-link">Lumen</a>
+    <a href="/fresco" class="nav-link">Fresco</a>
     <a href="/mcp" class="nav-link">MCP</a>
     <a href="/chat" class="nav-link">Chat</a>
     <a href="/playground" class="nav-link">Playground</a>
   </div>
   <div class="nav-right">
-    <a href="https://github.com/AxionLabsAI/axion" class="nav-btn-ghost">GitHub</a>
+    <a href="https://github.com/SennoricLabsAI/sennoric" class="nav-btn-ghost">GitHub</a>
     <a href="/keys" class="nav-btn">Get started</a>
   </div>
   <button class="hamburger-nav" onclick="toggleNav()" aria-label="Menu">☰</button>
@@ -75,7 +75,7 @@
 <main>
   <div class="connect-panel" id="connectPanel">
     <h2>⎔ Remote Console</h2>
-    <p>Connect to the axion-bridge WebSocket on your machine, exposed via Cloudflare Tunnel.</p>
+    <p>Connect to the sennoric-bridge WebSocket on your machine, exposed via Cloudflare Tunnel.</p>
     <form onsubmit="doConnect(); return false">
     <div class="connect-row">
       <input id="wsUrl" type="text" placeholder="wss://example.trycloudflare.com" value="ws://localhost:3002" />
@@ -91,7 +91,7 @@
   <div id="terminal-wrap"></div>
 </main>
 <footer>
-  <p>Run <code>axion-bridge</code> on your machine, then <code>cloudflared tunnel --url http://localhost:3002</code></p>
+  <p>Run <code>sennoric-bridge</code> on your machine, then <code>cloudflared tunnel --url http://localhost:3002</code></p>
 </footer>
 <script src="/assets/xterm.js"></script>
 <script>
@@ -165,10 +165,10 @@ function initTerm(){
 }
 (function(){
   const i=document.getElementById("wsUrl"),t=document.getElementById("tokenInput")
-  try{const s=localStorage.getItem("axion-console-url");if(s)i.value=s}catch{}
-  try{const s=localStorage.getItem("axion-console-token");if(s)t.value=s}catch{}
-  i.addEventListener("input",function(){try{localStorage.setItem("axion-console-url",this.value)}catch{}})
-  t.addEventListener("input",function(){try{localStorage.setItem("axion-console-token",this.value)}catch{}})
+  try{const s=localStorage.getItem("sennoric-console-url");if(s)i.value=s}catch{}
+  try{const s=localStorage.getItem("sennoric-console-token");if(s)t.value=s}catch{}
+  i.addEventListener("input",function(){try{localStorage.setItem("sennoric-console-url",this.value)}catch{}})
+  t.addEventListener("input",function(){try{localStorage.setItem("sennoric-console-token",this.value)}catch{}})
   // no auto-connect; user initiates via the form
 })()
 </script>

@@ -1,5 +1,5 @@
 // Team membership management with durable team files.
-// Team config stored at ~/.axion/teams/{team-name}/config.json
+// Team config stored at ~/.sennoric/teams/{team-name}/config.json
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, readdirSync } from 'fs';
 import { join } from 'path';

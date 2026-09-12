@@ -1006,7 +1006,7 @@ def main():
                 'jsonrpc': '2.0', 'id': msg_id, 'result': {
                     'protocolVersion': '2024-11-05',
                     'capabilities': {'tools': {}},
-                    'serverInfo': {'name': 'axion-davinci-resolve', 'version': '1.1.0'},
+                    'serverInfo': {'name': 'sennoric-davinci-resolve', 'version': '1.1.0'},
                 },
             })
 

@@ -59,11 +59,11 @@ function makeEnv() {
 
 // fetchImpl stub: controls whether the Sennoric API worker, the Fresco (RunPod)
 // health check, and the website reachability check each report healthy.
-function fetchStub({ axionApiUp = true, frescoUp = true, websiteUp = true } = {}) {
+function fetchStub({ sennoricApiUp = true, frescoUp = true, websiteUp = true } = {}) {
   return async (url) => {
     const s = typeof url === 'string' ? url : url.url
     if (s.includes('runpod.ai')) return { ok: frescoUp }
-    if (s.includes('api.sennoric.com')) return { ok: axionApiUp }
+    if (s.includes('api.sennoric.com')) return { ok: sennoricApiUp }
     return { ok: websiteUp }
   }
 }

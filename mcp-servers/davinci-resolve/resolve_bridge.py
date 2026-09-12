@@ -729,7 +729,7 @@ def handle_client(conn):
             method = msg.get("method", "")
             params = msg.get("params", {})
             if method == "initialize":
-                send_conn(conn, {"jsonrpc": "2.0", "id": msg_id, "result": {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "axion-davinci-resolve-bridge", "version": "1.0.0"}}})
+                send_conn(conn, {"jsonrpc": "2.0", "id": msg_id, "result": {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "sennoric-davinci-resolve-bridge", "version": "1.0.0"}}})
             elif method == "notifications/initialized":
                 pass
             elif method == "tools/list":

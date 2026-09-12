@@ -27,7 +27,7 @@ function trySymlink(target, path, type) {
 }
 
 function makeWorkspace() {
-  const base = mkdtempSync(join(tmpdir(), 'axion-containment-'));
+  const base = mkdtempSync(join(tmpdir(), 'sennoric-containment-'));
   mkdirSync(join(base, 'root'));
   const root = realpathSync(join(base, 'root'));
   const outside = realpathSync(base); // sibling of root, itself outside root
@@ -151,7 +151,7 @@ test('when root itself is reached via a symlinked ancestor, requests still resol
   writeFileSync(join(root, 'sub', 'file.txt'), 'hi');
   // Access root through a symlink alias — requestedPath is still relative,
   // so this exercises the canonicalRoot vs. root distinction directly.
-  const aliasBase = mkdtempSync(join(tmpdir(), 'axion-containment-alias-'));
+  const aliasBase = mkdtempSync(join(tmpdir(), 'sennoric-containment-alias-'));
   const alias = join(aliasBase, 'root-alias');
   symlinkSync(root, alias, 'junction');
   const resolved = resolveContained(alias, 'sub/file.txt');

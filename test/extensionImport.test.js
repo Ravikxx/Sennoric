@@ -56,7 +56,7 @@ test('web server protects the extension config route end to end', async (t) => {
     env: {
       ...process.env,
       PORT: '0',
-      AXION_EXTENSION_IMPORT_TOKEN: importToken,
+      SENNORIC_EXTENSION_IMPORT_TOKEN: importToken,
       USERPROFILE: resolve('.extension-test-home-does-not-exist'),
       HOME: resolve('.extension-test-home-does-not-exist'),
     },

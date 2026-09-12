@@ -6,9 +6,9 @@ import { execSync } from 'child_process';
 import { createHash, randomUUID } from 'crypto';
 import { writeJsonAtomic, writeTextAtomic } from './tui/persistence.js';
 
-const DIR  = join(homedir(), '.axion');
+const DIR  = join(homedir(), '.sennoric');
 const FILE = join(DIR, 'config.json');
-const SECRET_KEYS = ['apiKeys', 'axionKey', 'discordToken'];
+const SECRET_KEYS = ['apiKeys', 'sennoricKey', 'discordToken'];
 
 function load() {
   try {
@@ -140,10 +140,10 @@ export function saveDiscordToken(token) {
   save(_cfg);
 }
 
-export function getAxionKey() { return _cfg.axionKey || null; }
+export function getSennoricKey() { return _cfg.sennoricKey || null; }
 
-export function saveAxionKey(key) {
-  _cfg.axionKey = key;
+export function saveSennoricKey(key) {
+  _cfg.sennoricKey = key;
   save(_cfg);
 }
 
@@ -186,7 +186,7 @@ export function saveDonation(history) {
   const ts       = new Date().toISOString().replace(/[:.]/g, '-');
   const file     = join(DONATIONS_DIR, `${ts}.json`);
   const messages = toTrainingFormat(history);
-  writeJsonAtomic(file, { messages, meta: { donatedAt: new Date().toISOString(), source: 'axion' } });
+  writeJsonAtomic(file, { messages, meta: { donatedAt: new Date().toISOString(), source: 'sennoric' } });
   return file;
 }
 
@@ -337,7 +337,7 @@ export function undoLastBackup() {
 
 export function undoStackSize() { return _undoStack.length; }
 
-// ── Skills (~/.axion/skills/*.md + ./.axion/skills/*.md) ──────────────────────
+// ── Skills (~/.sennoric/skills/*.md + ./.sennoric/skills/*.md) ──────────────────────
 // Claude-style skill files: YAML-ish frontmatter (name, description, triggers)
 // followed by a markdown body. A skill auto-activates for the session when any
 // of its trigger words appear in a user message.
@@ -365,7 +365,7 @@ function parseSkill(raw, fallbackName) {
 export function getSkills() {
   const out = new Map(); // project-level overrides global
   const dirs = [SKILLS_DIR];
-  if (isTrustedDirectory()) dirs.push(join(process.cwd(), '.axion', 'skills'));
+  if (isTrustedDirectory()) dirs.push(join(process.cwd(), '.sennoric', 'skills'));
   for (const dir of dirs) {
     try {
       for (const f of readdirSync(dir)) {
@@ -464,14 +464,14 @@ export function removeCredential(id) {
 }
 
 // ── Custom slash commands ─────────────────────────────────────────────────────
-// Markdown files in ~/.axion/commands/ and ./.axion/commands/ become slash
+// Markdown files in ~/.sennoric/commands/ and ./.sennoric/commands/ become slash
 // commands: greet.md → /greet. $ARGUMENTS in the body is replaced with args.
 // Read fresh on each lookup so edits apply without restarting.
 
 export function getCustomCommands() {
   const out = {};
   const dirs = [join(DIR, 'commands')];
-  if (isTrustedDirectory()) dirs.push(join(process.cwd(), '.axion', 'commands'));
+  if (isTrustedDirectory()) dirs.push(join(process.cwd(), '.sennoric', 'commands'));
   for (const dir of dirs) {
     try {
       for (const f of readdirSync(dir)) {
@@ -581,7 +581,7 @@ export function saveChat(name, payload) {
   writeJsonAtomic(join(CHATS_DIR, `${name}.json`), serializeChat(name, payload));
 }
 
-// ── Session autosave (axion --continue) ────────────────────────────────────────
+// ── Session autosave (sennoric --continue) ────────────────────────────────────────
 // A single rolling slot, kept outside CHATS_DIR so it never appears in /resume.
 
 const LAST_SESSION_FILE = join(DIR, 'last-session.json');
@@ -605,7 +605,7 @@ export function clearLastSession() {
 
 // ── Multi-Workspace System (typed workspace registry) ─────────────────────────
 // Active workspace id is stored in config.json; the full registry of named
-// workspaces lives in ~/.axion/workspaces.json (see src/services/workspaces/).
+// workspaces lives in ~/.sennoric/workspaces.json (see src/services/workspaces/).
 // The legacy workspace.json (tab-layout autosave) below is unrelated and kept
 // intact — this is an additive, separate concept.
 
@@ -618,7 +618,7 @@ export function setCurrentWorkspaceId(id) {
 }
 
 // ── Workspace: every open tab, autosaved continuously ──────────────────────────
-// Lets `axion -c` reopen the whole multi-tab workspace, and protects background
+// Lets `sennoric -c` reopen the whole multi-tab workspace, and protects background
 // tabs from being lost on a crash (which never reaches the exit handler).
 const WORKSPACE_FILE = join(DIR, 'workspace.json');
 
@@ -672,8 +672,8 @@ export function deleteChat(name) {
 }
 
 export function exportSession(filePath, sessionData) {
-  const outPath = filePath.endsWith('.axion-session.json') ? filePath : `${filePath}.axion-session.json`;
-  writeJsonAtomic(outPath, { ...sessionData, __axion: true, exportedAt: new Date().toISOString() });
+  const outPath = filePath.endsWith('.sennoric-session.json') ? filePath : `${filePath}.sennoric-session.json`;
+  writeJsonAtomic(outPath, { ...sessionData, __sennoric: true, exportedAt: new Date().toISOString() });
   return outPath;
 }
 
@@ -681,7 +681,7 @@ export function importSession(filePath) {
   if (!existsSync(filePath)) return null;
   try {
     const data = JSON.parse(readFileSync(filePath, 'utf8'));
-    if (!data.__axion) return null;
+    if (!data.__sennoric) return null;
     return data;
   } catch { return null; }
 }
@@ -833,7 +833,7 @@ export function listChats() {
 }
 
 // ── Session Pinning & Quick-Switch Slots ──────────────────────────────────────
-// Pinned sessions persist in ~/.axion/pinned-sessions.json
+// Pinned sessions persist in ~/.sennoric/pinned-sessions.json
 // Quick-switch slots are the first 9 pinned sessions (Alt+1 through Alt+9).
 
 const PINNED_FILE = join(DIR, 'pinned-sessions.json');
@@ -1148,7 +1148,7 @@ export function dropTodoScope(scope) {
 
 // ── Spend tracker (/cost) ────────────────────────────────────────────────────
 // One entry per completed agent turn: { ts, model, inputTokens, outputTokens, cost }.
-// Bounded so ~/.axion/cost-log.json doesn't grow forever.
+// Bounded so ~/.sennoric/cost-log.json doesn't grow forever.
 
 const COST_LOG_FILE = join(DIR, 'cost-log.json');
 const COST_LOG_MAX_ENTRIES = 5000;
@@ -1177,7 +1177,7 @@ export function appendCostLog(entry) {
 }
 
 // ── Content-Addressed Snapshot/Undo System ──────────────────────────────────
-// Uses a dedicated git repo per project under ~/.axion/snapshots/<project-hash>/
+// Uses a dedicated git repo per project under ~/.sennoric/snapshots/<project-hash>/
 // Each capture produces a stable commit hash (content-addressed ID).
 // Supports per-file diffs, selective restore, and preview-before-restore.
 // Respects the project's .gitignore rules automatically via git's --work-tree.
@@ -1194,7 +1194,7 @@ function _ensureSnapshotRepo(projectPath) {
   if (!existsSync(join(repoPath, '.git'))) {
     mkdirSync(repoPath, { recursive: true });
     execSync('git init', { cwd: repoPath, stdio: 'pipe', encoding: 'utf8' });
-    execSync('git config user.email "axion@snapshot"', { cwd: repoPath, stdio: 'pipe', encoding: 'utf8' });
+    execSync('git config user.email "sennoric@snapshot"', { cwd: repoPath, stdio: 'pipe', encoding: 'utf8' });
     execSync('git config user.name "Sennoric Snapshot"', { cwd: repoPath, stdio: 'pipe', encoding: 'utf8' });
     execSync('git config commit.gpgsign false', { cwd: repoPath, stdio: 'pipe', encoding: 'utf8' });
   }

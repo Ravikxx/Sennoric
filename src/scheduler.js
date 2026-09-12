@@ -67,15 +67,38 @@ export function isDue(schedule, lastRun) {
 
 async function runSchedule(task) {
   const modelId = task.model || DEFAULT_MODEL;
-  const agent   = new Agent({ model: modelId, mode: 'auto' });
-
+  // The Agent constructor takes `modelAlias` (not `model`) and calls the
+  // stream/message callbacks unguarded, so they must exist. The old code
+  // passed neither correctly: every run crashed with "Unknown provider for
+  // model: undefined" before producing output, and `onText` was never a
+  // supported run() option, so results were never captured (TASKS.md E6).
   let result = '';
+  const agent   = new Agent({
+    modelAlias: modelId,
+    mode: 'auto',
+    label: 'schedule',
+    todoScope: `schedule:${task.name}`,
+    onStreamChunk: (chunk) => { result += chunk; },
+    onMessage: () => {},
+    onTokens: () => {},
+    onToolCall: () => {},
+    onToolResult: () => {},
+    onStreamEnd: () => {},
+    onNotify: () => {},
+  });
+
   try {
+    // Scheduled tasks run unattended: the user opted in when creating the
+    // schedule, so confirmations auto-approve (same policy as piped
+    // bypass mode) and interactive questions get an empty answer.
     await agent.run(task.prompt, {
-      onText: (t) => { result += t; },
+      askConfirm: () => Promise.resolve(true),
+      askPlanConfirm: () => Promise.resolve(true),
+      askUser: () => Promise.resolve(''),
     });
   } catch (err) {
-    result = `Error: ${err.message}`;
+    // Keep whatever streamed before the failure, then append the reason.
+    result = `${result}${result ? '\n\n' : ''}Error: ${err.message}`;
   }
 
   const header = `# ${task.name}\n*Ran: ${new Date().toLocaleString()}*\n*Schedule: ${task.schedule}*\n\n---\n\n`;

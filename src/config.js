@@ -5,7 +5,7 @@ import { homedir } from 'os';
 import { isTrustedDirectory } from './persist.js';
 
 const cwdEnv  = join(process.cwd(), '.env');
-const homeEnv = join(homedir(), '.axion', '.env');
+const homeEnv = join(homedir(), '.sennoric', '.env');
 if (isTrustedDirectory() && existsSync(cwdEnv)) config({ path: cwdEnv });
 else if (existsSync(homeEnv)) config({ path: homeEnv });
 else config();
@@ -16,9 +16,8 @@ export const MODELS = {
 };
 
 export const MODEL_PROVIDERS = {
-  fresco:         'sennoric',
-  glyph:          'sennoric',
-  'axion-vision': 'axion-vision',
+  fresco: 'sennoric',
+  glyph:  'sennoric',
 };
 
 export const API_KEYS = {
@@ -29,7 +28,6 @@ export const API_KEYS = {
 export const BASE_URLS = {
   fresco:         'https://api.sennoric.com/v1',
   glyph:          'https://api.sennoric.com/v1',
-  'axion-vision': 'https://axionlabsai-lumenvision.hf.space/v1',
 };
 
 // Named custom endpoints — mutated at runtime via /endpoint command.
@@ -37,42 +35,45 @@ export const BASE_URLS = {
 // e.g. CUSTOM_ENDPOINTS['ollama'] = { baseURL, model, apiKey }
 export const CUSTOM_ENDPOINTS = {};
 
-// Vision model for computer use — mutable object so imports stay live after /vision changes it.
-export const VISION_MODEL = { current: process.env.AXION_VISION_MODEL || 'axion-vision' };
+// Vision model for computer use — mutable object so imports stay live after /vision
+// changes it. There is deliberately no built-in default: users pick a vision model
+// with /vision <model> (or the SENNORIC_VISION_MODEL env var), because the hosted
+// sennoric-vision endpoint no longer exists. Empty string = none configured.
+export const VISION_MODEL = { current: process.env.SENNORIC_VISION_MODEL || '' };
 
 // Video-understanding model (processes actual video files). Mutable so /video
 // updates it live. Empty by default — the video-analysis fallback ladder
 // (video → vision → text-only LLM) treats "" as "no video model configured".
-export const VIDEO_MODEL = { current: process.env.AXION_VIDEO_MODEL || '' };
+export const VIDEO_MODEL = { current: process.env.SENNORIC_VIDEO_MODEL || '' };
 
 // Audio-understanding model (processes audio files). Mutable so /audio-model
 // updates it live. Empty by default — no fallback ladder (audio has no frame analog).
-export const AUDIO_MODEL = { current: process.env.AXION_AUDIO_MODEL || '' };
+export const AUDIO_MODEL = { current: process.env.SENNORIC_AUDIO_MODEL || '' };
 
 // ── File Watcher config ───────────────────────────────────────────────────────
 export const FILE_WATCHER = {
-  enabled:    process.env.AXION_FILE_WATCHER === '1' || process.env.AXION_FILE_WATCHER === 'true',
-  debounceMs: parseInt(process.env.AXION_WATCHER_DEBOUNCE_MS || '200', 10),
-  extraIgnore: (process.env.AXION_WATCHER_IGNORE || '').split(',').filter(Boolean),
+  enabled:    process.env.SENNORIC_FILE_WATCHER === '1' || process.env.SENNORIC_FILE_WATCHER === 'true',
+  debounceMs: parseInt(process.env.SENNORIC_WATCHER_DEBOUNCE_MS || '200', 10),
+  extraIgnore: (process.env.SENNORIC_WATCHER_IGNORE || '').split(',').filter(Boolean),
 };
 
 // ── Shell config ──────────────────────────────────────────────────────────────
 export const SHELL_CONFIG = {
-  defaultShell: process.env.AXION_SHELL || process.env.SHELL || '',
+  defaultShell: process.env.SENNORIC_SHELL || process.env.SHELL || '',
 };
 
 // ── Search engine config ─────────────────────────────────────────────────────
 // Controls the ripgrep/fs search backend used by glob/grep/find tools.
 // backend: 'auto' (default — use rg when available), 'ripgrep', or 'fs'.
 export const SEARCH_CONFIG = {
-  backend:        process.env.AXION_SEARCH_BACKEND || 'auto',
-  maxResults:     parseInt(process.env.AXION_SEARCH_MAX_RESULTS || '500', 10) || 500,
-  includeHidden:  process.env.AXION_SEARCH_HIDDEN === '1' || process.env.AXION_SEARCH_HIDDEN === 'true',
-  excludeGit:     process.env.AXION_SEARCH_INCLUDE_GIT !== '1' && process.env.AXION_SEARCH_INCLUDE_GIT !== 'true',
+  backend:        process.env.SENNORIC_SEARCH_BACKEND || 'auto',
+  maxResults:     parseInt(process.env.SENNORIC_SEARCH_MAX_RESULTS || '500', 10) || 500,
+  includeHidden:  process.env.SENNORIC_SEARCH_HIDDEN === '1' || process.env.SENNORIC_SEARCH_HIDDEN === 'true',
+  excludeGit:     process.env.SENNORIC_SEARCH_INCLUDE_GIT !== '1' && process.env.SENNORIC_SEARCH_INCLUDE_GIT !== 'true',
 };
 
 // Image generation model — mutable so /img-gen-model changes it globally.
-export const IMAGE_GEN_MODEL = { current: process.env.AXION_IMAGE_MODEL || 'dall-e-3' };
+export const IMAGE_GEN_MODEL = { current: process.env.SENNORIC_IMAGE_MODEL || 'dall-e-3' };
 
 export function setApiKey(modelOrProvider, key) {
   const provider = MODEL_PROVIDERS[modelOrProvider] || modelOrProvider;
@@ -180,7 +181,7 @@ export async function fetchEndpointContextWindows() {
   }
 }
 
-export const DEFAULT_MODEL = process.env.AXION_MODEL || 'fresco';
+export const DEFAULT_MODEL = process.env.SENNORIC_MODEL || 'fresco';
 export const DEFAULT_MODE  = 'ask';
 
 // ── Multi-Agent System — named agents with configurable permissions ──────────
@@ -188,23 +189,23 @@ export const DEFAULT_MODE  = 'ask';
 // roleDefinition, permissions: { allowedTools, deniedTools } }. Built-in
 // agents (build, ask, debug, review) are always available; entries here
 // override a built-in with the same id, or add a new named agent. Settable via
-// AXION_AGENTS env var (JSON string) or directly in code.
+// SENNORIC_AGENTS env var (JSON string) or directly in code.
 export const AGENTS = (() => {
   try {
-    if (process.env.AXION_AGENTS) return JSON.parse(process.env.AXION_AGENTS);
+    if (process.env.SENNORIC_AGENTS) return JSON.parse(process.env.SENNORIC_AGENTS);
   } catch {}
   return {};
 })();
 
 // Maximum number of concurrent tool executions per batch.
 // Read-only tools are grouped and run in parallel up to this limit.
-export const MAX_TOOL_CONCURRENCY = parseInt(process.env.AXION_MAX_TOOL_CONCURRENCY, 10) || 10;
+export const MAX_TOOL_CONCURRENCY = parseInt(process.env.SENNORIC_MAX_TOOL_CONCURRENCY, 10) || 10;
 
 // Ordered list of model aliases for automatic rate-limit fallback.
 // When the active model hits 429, Sennoric tries the next model in this list.
-// Set via AXION_FALLBACK_CHAIN env var (comma-separated) or directly in config.
+// Set via SENNORIC_FALLBACK_CHAIN env var (comma-separated) or directly in config.
 export function getProviderFallbackChain() {
-  const env = process.env.AXION_FALLBACK_CHAIN;
+  const env = process.env.SENNORIC_FALLBACK_CHAIN;
   if (env) return env.split(',').map((s) => s.trim()).filter(Boolean);
   return [];
 }
@@ -268,7 +269,7 @@ export function estimateCost(modelAlias, inputTokens, outputTokens) {
 // ── Context partitioning zones ────────────────────────────────────────────
 //
 // Per-zone token budgets and retention policies for the context partitioning
-// system. Override via CONTEXT_ZONES env var (JSON array) or AXION.md config.
+// system. Override via CONTEXT_ZONES env var (JSON array) or SENNORIC.md config.
 // Retention policies: keep_all | prune_oldest | prune_least_important
 export const CONTEXT_ZONES = (() => {
   try {

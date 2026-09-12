@@ -54,14 +54,14 @@ export function buildProjectContext(cwd = process.cwd(), workspaceRoot = cwd) {
   catch { return ''; }
   const projectPath = (...parts) => resolveContained(workspaceRoot, resolve(safeCwd, ...parts));
 
-  // Persistent project instructions. AXION.md takes priority (global ~/.axion/AXION.md,
-  // then project root, then ./.axion/AXION.md). If no AXION.md is found anywhere, fall
+  // Persistent project instructions. SENNORIC.md takes priority (global ~/.sennoric/SENNORIC.md,
+  // then project root, then ./.sennoric/SENNORIC.md). If no SENNORIC.md is found anywhere, fall
   // back to AGENTS.md, then CLAUDE.md, so projects using those conventions still get picked up.
   let foundInstructions = false;
   for (const p of [
-    resolve(homedir(), '.axion', 'AXION.md'),
-    (() => { try { return projectPath('AXION.md'); } catch { return null; } })(),
-    (() => { try { return projectPath('.axion', 'AXION.md'); } catch { return null; } })(),
+    resolve(homedir(), '.sennoric', 'SENNORIC.md'),
+    (() => { try { return projectPath('SENNORIC.md'); } catch { return null; } })(),
+    (() => { try { return projectPath('.sennoric', 'SENNORIC.md'); } catch { return null; } })(),
   ]) {
     if (!p) continue;
     try {
@@ -336,20 +336,20 @@ const HOSTED_SMALL_MODEL_TOOL_NAMES = new Set([
 ]);
 
 // fresco/glyph authenticate with the account's own Sennoric sign-in (a session
-// token or axion-sk- key resolved via resolveAxionAuth in models.js), never
+// token or sennoric-sk- key resolved via resolveSennoricAuth in models.js), never
 // a third-party "API key" in the way every other provider means that term —
 // error messages that tell the user to check an "API key" are simply wrong
 // for these and need their own wording wherever provider errors surface.
-function isAxionHostedProvider(provider) {
+function isSennoricHostedProvider(provider) {
   return provider === 'sennoric';
 }
 
 function restrictToolsForHostedModel(tools, modelAlias) {
-  if (!isAxionHostedProvider(resolveProvider(modelAlias))) return tools;
+  if (!isSennoricHostedProvider(resolveProvider(modelAlias))) return tools;
   return tools.filter((t) => HOSTED_SMALL_MODEL_TOOL_NAMES.has(t.function?.name));
 }
 
-export { ThinkStreamFilter, restrictToolsForHostedModel, HOSTED_SMALL_MODEL_TOOL_NAMES, isAxionHostedProvider };
+export { ThinkStreamFilter, restrictToolsForHostedModel, HOSTED_SMALL_MODEL_TOOL_NAMES, isSennoricHostedProvider };
 
 export class Agent {
   constructor({ modelAlias, mode, label = 'main', todoScope = 'global', onToolCall, onToolResult, onMessage, onTokens, onStreamChunk, onStreamEnd, onNotify, agentId, workspaceId }) {
@@ -443,7 +443,7 @@ export class Agent {
       }
     };
 
-    // File watcher — started lazily on first prompt when enabled via AXION_FILE_WATCHER=1
+    // File watcher — started lazily on first prompt when enabled via SENNORIC_FILE_WATCHER=1
     this._watcherHandle = null;
     this._ensureWatcher = () => {
       if (this._watcherHandle || !FILE_WATCHER.enabled || !getWorkspaceGrant(this.label)) return;
@@ -499,7 +499,7 @@ export class Agent {
   // should check this, not the raw flag, so the prompt and the tool list
   // never disagree about what's actually available.
   _computerUseActive() {
-    return this.computerUse && !isAxionHostedProvider(resolveProvider(this.modelAlias));
+    return this.computerUse && !isSennoricHostedProvider(resolveProvider(this.modelAlias));
   }
   setAdviserModel(alias)   { this.adviserModel = alias || null; }
 
@@ -1671,7 +1671,7 @@ One word only:`;
           const { kind, message } = classifyProviderError(err, this.modelAlias);
           this.onMessage({
             role: 'error', content: message, errorKind: kind,
-            errorRequiresSignIn: isAxionHostedProvider(resolveProvider(this.modelAlias)),
+            errorRequiresSignIn: isSennoricHostedProvider(resolveProvider(this.modelAlias)),
           });
         }
         return null;
@@ -1683,7 +1683,7 @@ One word only:`;
       const { kind, message } = classifyProviderError(lastError, this.modelAlias);
       this.onMessage({
         role: 'error', content: message, errorKind: kind,
-        errorRequiresSignIn: isAxionHostedProvider(resolveProvider(this.modelAlias)),
+        errorRequiresSignIn: isSennoricHostedProvider(resolveProvider(this.modelAlias)),
       });
     }
     return null;
@@ -2060,7 +2060,7 @@ export function classifyProviderError(err, modelAlias) {
     const status = err.data.status ?? err?.status ?? err?.response?.status;
     if (status === 401) {
       if (modelAlias === 'other') return { kind: 'account', message: `Auth failed for custom endpoint. Use /endpoint <url> <model> <key> to set the API key.` };
-      if (isAxionHostedProvider(resolveProvider(modelAlias))) return { kind: 'account', message: `Invalid or revoked Sennoric credentials. Use /login or /axion-key <your-key> to authenticate.\n→ Sign up or get a key at sennoric.com/keys` };
+      if (isSennoricHostedProvider(resolveProvider(modelAlias))) return { kind: 'account', message: `Invalid or revoked Sennoric credentials. Use /login or /sennoric-key <your-key> to authenticate.\n→ Sign up or get a key at sennoric.com/keys` };
       return { kind: 'account', message: `Invalid API key for "${modelAlias}". Use /api ${modelAlias} <your-key> to set it.` };
     }
     if (status === 429) return { kind: 'quota', message: `Rate limited by "${providerLabel}". Wait a moment and try again.` };
@@ -2072,7 +2072,7 @@ export function classifyProviderError(err, modelAlias) {
       // that detail (e.g. a RunPod-side rejection unrelated to the user's
       // own account) is the only lead toward the actual cause, so it's
       // appended rather than discarded.
-      const text = isAxionHostedProvider(resolveProvider(modelAlias))
+      const text = isSennoricHostedProvider(resolveProvider(modelAlias))
         ? `Access denied for "${modelAlias}". Your Sennoric account may not have access to this model — try signing in again with /login, or contact support if this persists.${message ? `\n(${message})` : ''}`
         : `Access denied for "${modelAlias}". Check that your API key has the right permissions.`;
       return { kind, message: text };
@@ -2087,7 +2087,7 @@ export function classifyProviderError(err, modelAlias) {
 
   if (status === 401 || /unauthorized|invalid.*key|api.?key/i.test(msg)) {
     if (modelAlias === 'other') return { kind: 'account', message: `Auth failed for custom endpoint. Use /endpoint <url> <model> <key> to set the API key.` };
-    if (isAxionHostedProvider(resolveProvider(modelAlias))) return { kind: 'account', message: `Invalid or revoked Sennoric credentials. Use /login or /axion-key <your-key> to authenticate.\n→ Sign up or get a key at sennoric.com/keys` };
+    if (isSennoricHostedProvider(resolveProvider(modelAlias))) return { kind: 'account', message: `Invalid or revoked Sennoric credentials. Use /login or /sennoric-key <your-key> to authenticate.\n→ Sign up or get a key at sennoric.com/keys` };
     return { kind: 'account', message: `Invalid API key for "${modelAlias}". Use /api ${modelAlias} <your-key> to set it.` };
   }
   if (status === 429 || /rate.?limit|quota/i.test(msg)) {
@@ -2102,7 +2102,7 @@ export function classifyProviderError(err, modelAlias) {
   }
   if (status === 403 || /forbidden|permission/i.test(msg)) {
     if (/suspend/i.test(msg)) return { kind: 'safety', message: msg };
-    if (isAxionHostedProvider(resolveProvider(modelAlias))) {
+    if (isSennoricHostedProvider(resolveProvider(modelAlias))) {
       // errObj.message is the Worker's relayed upstream text (e.g. the
       // inference backend's own rejection reason) — the only signal that
       // distinguishes "your account lacks access" from "the backend itself

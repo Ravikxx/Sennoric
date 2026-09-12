@@ -15,12 +15,12 @@ workers_dev = true
 
 [[d1_databases]]
 binding = "DB"
-database_name = "axion-db"
+database_name = "sennoric-db"
 database_id = "08b1ad36-8b1b-419d-8b3f-f93b04dd8723"
 
 [[r2_buckets]]
 binding = "AVATARS"
-bucket_name = "axion-profile-pictures"
+bucket_name = "sennoric-profile-pictures"
 
 [[durable_objects.bindings]]
 name = "BRIDGE"

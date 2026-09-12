@@ -293,7 +293,7 @@ def main():
                 'jsonrpc': '2.0', 'id': msg_id, 'result': {
                     'protocolVersion': '2024-11-05',
                     'capabilities': {'tools': {}},
-                    'serverInfo': {'name': 'axion-unreal', 'version': '1.0.0'},
+                    'serverInfo': {'name': 'sennoric-unreal', 'version': '1.0.0'},
                 },
             })
 

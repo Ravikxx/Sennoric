@@ -17,7 +17,7 @@ test('import Agent', async () => {
 });
 
 test('sub-agents inherit the parent repository root, scope, and expiration', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'axion-sub-scope-'));
+  const root = mkdtempSync(join(tmpdir(), 'sennoric-sub-scope-'));
   const label = `parent-scope-${Date.now()}`;
   const canonicalRoot = setWorkspaceRoot(label, root);
   const expiresAt = new Date(Date.now() + 60_000).toISOString();

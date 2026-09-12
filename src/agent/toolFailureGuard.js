@@ -10,7 +10,7 @@
 // that always fails with the same error even when other tools succeed).
 // Session-level counts reset when any tool succeeds.
 
-const DEFAULT_THRESHOLD = parseInt(process.env.AXION_TOOL_FAILURE_THRESHOLD || '3', 10);
+const DEFAULT_THRESHOLD = parseInt(process.env.SENNORIC_TOOL_FAILURE_THRESHOLD || '3', 10);
 
 // ── Error classification ─────────────────────────────────────────────────────
 

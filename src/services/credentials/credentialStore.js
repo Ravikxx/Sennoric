@@ -4,7 +4,7 @@ import { homedir } from 'os';
 import { encrypt, decrypt } from '../../utils/crypto.js';
 import { writeJsonAtomic } from '../../tui/persistence.js';
 
-const DIR = join(homedir(), '.axion');
+const DIR = join(homedir(), '.sennoric');
 const CREDENTIALS_FILE = join(DIR, 'credentials.json');
 
 function readStore() {

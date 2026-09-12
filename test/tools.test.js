@@ -195,7 +195,7 @@ test('parseToolCallsFromText skips calls missing name or input', () => {
 // ── read_file / write_file (file system) ──────────────────────────────────────
 
 test('write_file creates a file and read_file reads it back', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'axion-tool-test-'));
+  const dir = mkdtempSync(join(tmpdir(), 'sennoric-tool-test-'));
   const tmp = join(dir, 'file.txt');
   const options = { agentLabel: `write-read-${Date.now()}` };
   setWorkspaceRoot(options.agentLabel, dir);
@@ -213,7 +213,7 @@ test('write_file creates a file and read_file reads it back', async () => {
 });
 
 test('write_file creates parent directories', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'axion-tool-dir-test-'));
+  const dir = mkdtempSync(join(tmpdir(), 'sennoric-tool-dir-test-'));
   const file = join(dir, 'nested', 'test.txt');
   const options = { agentLabel: `write-dir-${Date.now()}` };
   setWorkspaceRoot(options.agentLabel, dir);

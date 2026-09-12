@@ -12,11 +12,11 @@ import { renderDiffViewer } from '../src/tui/diff-viewer/diffViewer.js';
 
 function withGitRepo(fn) {
   return async () => {
-    const dir = mkdtempSync(join(tmpdir(), `axion-diff-`));
+    const dir = mkdtempSync(join(tmpdir(), `sennoric-diff-`));
     try {
       execSync('git init -q', { cwd: dir, stdio: 'ignore' });
       execSync('git config user.email a@b.c', { cwd: dir, stdio: 'ignore' });
-      execSync('git config user.name axion', { cwd: dir, stdio: 'ignore' });
+      execSync('git config user.name sennoric', { cwd: dir, stdio: 'ignore' });
       mkdirSync(join(dir, 'src'), { recursive: true });
       writeFileSync(join(dir, 'src', 'a.js'), 'export const x = 1;\n');
       writeFileSync(join(dir, 'README.md'), '# README\n');

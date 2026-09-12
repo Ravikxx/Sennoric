@@ -1,9 +1,9 @@
 // Typed workspace store — durable registry of named project contexts.
 // Each workspace has a stable id, a human name, an absolute path, and
-// timestamps. The active workspace id is persisted so `axion` reopens in the
+// timestamps. The active workspace id is persisted so `sennoric` reopens in the
 // same project context across sessions.
 //
-// Storage: ~/.axion/workspaces.json (typed registry) + currentWorkspaceId in
+// Storage: ~/.sennoric/workspaces.json (typed registry) + currentWorkspaceId in
 // the main config.json (via persist.js). The legacy workspace.json (tab layout
 // autosave) is left untouched — this is a separate, additive registry.
 
@@ -13,7 +13,7 @@ import { homedir } from 'os';
 import { writeJsonAtomic } from '../../tui/persistence.js';
 import { canonicalizeWorkspaceRoot } from '../../agent/workspaceAuthority.js';
 
-const DIR = join(homedir(), '.axion');
+const DIR = join(homedir(), '.sennoric');
 const WORKSPACES_FILE = join(DIR, 'workspaces.json');
 
 function readAll() {

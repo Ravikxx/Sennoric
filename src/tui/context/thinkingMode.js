@@ -17,7 +17,7 @@ import { homedir } from 'os';
 const THINKING_MODES = ['show', 'hide'];
 const DEFAULT_MODE = 'show';
 
-const KV_DIR  = join(homedir(), '.axion');
+const KV_DIR  = join(homedir(), '.sennoric');
 const KV_FILE = join(KV_DIR, 'thinking-mode.json');
 
 // In-memory cache

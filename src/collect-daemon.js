@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * axion-collect — local dataset collection daemon
+ * sennoric-collect — local dataset collection daemon
  * Receives conversation sessions from Sennoric and saves them as plain
- * training-format JSON ({messages:[{role,content}]}) to ~/.axion/dataset/.
+ * training-format JSON ({messages:[{role,content}]}) to ~/.sennoric/dataset/.
  *
  * Usage:
- *   axion-collect               (listens on default port 47832)
- *   axion-collect --port 12345  (custom port)
- *   axion-collect --out ~/data  (custom output directory)
+ *   sennoric-collect               (listens on default port 47832)
+ *   sennoric-collect --port 12345  (custom port)
+ *   sennoric-collect --out ~/data  (custom output directory)
  */
 import { createServer } from 'http';
 import { writeFileSync, mkdirSync, existsSync, readdirSync } from 'fs';
@@ -17,7 +17,7 @@ import minimist from 'minimist';
 
 const argv    = minimist(process.argv.slice(2), { string: ['port', 'out'] });
 const PORT    = Number(argv.port) || 47832;
-const DATASET = argv.out ? argv.out.replace('~', homedir()) : join(homedir(), '.axion', 'dataset');
+const DATASET = argv.out ? argv.out.replace('~', homedir()) : join(homedir(), '.sennoric', 'dataset');
 
 if (!existsSync(DATASET)) mkdirSync(DATASET, { recursive: true });
 
@@ -72,7 +72,7 @@ const server = createServer((req, res) => {
           messages,
           meta: {
             receivedAt: new Date().toISOString(),
-            source: data.meta?.source || 'axion',
+            source: data.meta?.source || 'sennoric',
           },
         };
         const ts   = new Date().toISOString().replace(/[:.]/g, '-');
@@ -96,7 +96,7 @@ const server = createServer((req, res) => {
 });
 
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`axion-collect running on http://127.0.0.1:${PORT}`);
+  console.log(`sennoric-collect running on http://127.0.0.1:${PORT}`);
   console.log(`Dataset directory: ${DATASET}`);
   console.log(`Sessions collected so far: ${countSessions()}`);
   console.log('Waiting for sessions from Sennoric...');
@@ -104,8 +104,8 @@ server.listen(PORT, '127.0.0.1', () => {
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
-    console.error(`Port ${PORT} is already in use. Another axion-collect may be running.`);
-    console.error(`Try: axion-collect --port <different-port>`);
+    console.error(`Port ${PORT} is already in use. Another sennoric-collect may be running.`);
+    console.error(`Try: sennoric-collect --port <different-port>`);
   } else {
     console.error(`Server error: ${err.message}`);
   }
