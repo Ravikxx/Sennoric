@@ -34,7 +34,7 @@ function makeEnv() {
       notify_announcements INTEGER DEFAULT 1, notify_scheduled INTEGER DEFAULT 1
     );
     CREATE TABLE usage_daily (
-      key_id TEXT NOT NULL, date TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0
+      user_id TEXT NOT NULL, date TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0
     );
     INSERT INTO users (id, email) VALUES ('u1', 'account-routes@example.com');
   `)

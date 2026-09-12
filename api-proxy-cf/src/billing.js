@@ -216,7 +216,7 @@ export async function deactivateCreditCode(db, id) {
 // (cost 0, not started) without any write; only chargeAccountUsage, which
 // runs after a real chargeable request, ever starts or advances one.
 export const WEEK_MS = 7 * 24 * 60 * 60 * 1000
-export const WINDOW_MS = 2 * 60 * 60 * 1000
+export const WINDOW_MS = 5 * 60 * 60 * 1000
 
 // Exported so callers that already have a batch of raw rows (e.g. the admin
 // user list) can compute effective usage per-row without a DB round trip per

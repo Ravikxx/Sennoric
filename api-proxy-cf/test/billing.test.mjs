@@ -63,6 +63,10 @@ class D1TestDatabase {
         sandbox_week_count INTEGER NOT NULL DEFAULT 0,
         sandbox_week_start TEXT NOT NULL DEFAULT '',
         sandbox_mode TEXT NOT NULL DEFAULT 'ask',
+        square_customer_id TEXT,
+        square_subscription_id TEXT,
+        stripe_customer_id TEXT,
+        stripe_subscription_id TEXT,
         created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
       );
       CREATE TABLE credit_codes (
@@ -109,6 +113,12 @@ class D1TestDatabase {
         key TEXT PRIMARY KEY,
         count INTEGER NOT NULL DEFAULT 0,
         window_start INTEGER NOT NULL
+      );
+      CREATE TABLE usage_daily (
+        user_id TEXT NOT NULL,
+        date TEXT NOT NULL,
+        count INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (user_id, date)
       );
       CREATE TABLE admin_allowlist (
         email TEXT PRIMARY KEY,
@@ -616,6 +626,44 @@ test('authenticated admin creation and user redemption routes work end to end', 
 })
 
 afterEach(() => mock.restoreAll())
+
+test('billing portal opens a Stripe-managed session for a Stripe-billed subscriber', async () => {
+  const db = new D1TestDatabase()
+  const secret = 'portal-secret'
+  addUser(db, 'pro-user')
+  db.prepare("UPDATE users SET plan='pro', stripe_customer_id='cus_test1' WHERE id='pro-user'").run()
+  const token = await sessionToken('pro-user', secret)
+  const env = { DB: db, TOKEN_SECRET: secret, STRIPE_SECRET_KEY: 'sk_test_x' }
+
+  mock.method(globalThis, 'fetch', async (input, init) => {
+    assert.equal(String(input), 'https://api.stripe.com/v1/billing_portal/sessions')
+    const body = new URLSearchParams(init.body)
+    assert.equal(body.get('customer'), 'cus_test1')
+    assert.equal(body.get('return_url'), 'https://sennoric.com/settings.html')
+    return Response.json({ url: 'https://billing.stripe.com/session-test' })
+  })
+
+  const res = await app.request('/billing/portal', {
+    method: 'POST', headers: { Authorization: `Bearer ${token}` },
+  }, env)
+  assert.equal(res.status, 200)
+  assert.equal((await res.json()).url, 'https://billing.stripe.com/session-test')
+})
+
+test('billing portal refuses a user with no Stripe subscription, without calling Stripe', async () => {
+  const db = new D1TestDatabase()
+  const secret = 'portal-no-sub-secret'
+  addUser(db, 'free-user')
+  const token = await sessionToken('free-user', secret)
+  const env = { DB: db, TOKEN_SECRET: secret, STRIPE_SECRET_KEY: 'sk_test_x' }
+
+  mock.method(globalThis, 'fetch', async () => { throw new Error('should not call Stripe') })
+
+  const res = await app.request('/billing/portal', {
+    method: 'POST', headers: { Authorization: `Bearer ${token}` },
+  }, env)
+  assert.equal(res.status, 400)
+})
 
 test('a sitewide promotion: created by an admin, pre-applied at checkout, visible publicly, then ended', async () => {
   const db = new D1TestDatabase()
@@ -1157,12 +1205,15 @@ test('account dashboard exposes exact metered microdollars without losing small 
   assert.equal(body.credits.balance_microdollars, 806)
   assert.equal(body.credits.balance_usd, 0.0008)
   assert.equal(body.usage.weekly_included_used_microdollars, 194)
-  assert.equal(body.usage.weekly_included_limit_microdollars, 125_000)
+  assert.equal(body.usage.weekly_included_limit_microdollars, 62_500)
   assert.equal(body.usage.weekly_included_used_usd, 0.0002)
+  assert.equal(body.usage.weekly_included_percent_used, 0) // 194 / 62,500 rounds down to 0%
   assert.equal(body.usage.weekly_started, true)
   assert.equal(body.usage.window_included_used_microdollars, 194)
-  assert.equal(body.usage.window_included_limit_microdollars, 50_000)
+  assert.equal(body.usage.window_included_limit_microdollars, 25_000)
+  assert.equal(body.usage.window_included_percent_used, 1) // 194 / 25,000 rounds to 1%
   assert.equal(body.usage.window_started, true)
+  assert.equal(body.usage.window_hours, 5)
   assert.deepEqual(body.metering, {
     unit: 'microdollar',
     usd_per_microdollar: 0.000001,
@@ -1366,6 +1417,16 @@ test('session-authenticated completions are charged to the account', async () =>
     assert.equal(user.credit_balance, 0)
     // Free per-IP tier untouched — this was billed traffic.
     assert.equal(db.prepare("SELECT COUNT(*) AS count FROM rate_limits WHERE key LIKE 'free:%'").first().count, 0)
+
+    // Regression: usage_daily (the chart /account/keys/daily reads) used to
+    // be written only when the request carried a real API key — session
+    // traffic like this (the actual chat.html app, which has no keyRow) was
+    // silently never recorded, undercounting the chart for anyone using the
+    // chat interface. It's keyed by user now, not by key, specifically so
+    // this case is captured too.
+    const today = new Date().toISOString().slice(0, 10)
+    const daily = db.prepare('SELECT count FROM usage_daily WHERE user_id=? AND date=?').bind('member', today).first()
+    assert.equal(daily?.count, 1)
   } finally {
     globalThis.fetch = realFetch
   }
