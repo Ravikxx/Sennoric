@@ -5,6 +5,7 @@ import {
   buildSquareCheckoutPayload,
   buildStripeCheckoutParams,
   buildStripeCouponParams,
+  buildStripeCreditCheckoutParams,
   buildStripePromotionCodeParams,
   canStartUsage,
   chargeAccountUsage,
@@ -15,6 +16,7 @@ import {
   readSandboxUsage,
   listCreditCodes,
   microdollarsToUsd,
+  usdToMicrodollars,
   periodStatus,
   redeemCreditCode,
   WEEK_MS,
@@ -1929,6 +1931,79 @@ app.post('/billing/checkout', async (c) => {
   return json({ url: data.url })
 })
 
+// Pay-as-you-go API credit top-up (mode=payment, not a subscription — see
+// buildStripeCreditCheckoutParams). $5-$500 per checkout; the actual credit
+// is applied by the checkout.session.completed webhook handler once Stripe
+// confirms payment, not here — this route only starts the checkout.
+const CREDIT_TOPUP_MIN_USD = 5
+const CREDIT_TOPUP_MAX_USD = 500
+app.post('/billing/credits/checkout', async (c) => {
+  const user = await requireAuth(c)
+  if (!user) return json({ error: 'Not authenticated' }, 401)
+  const { amount_usd } = await c.req.json().catch(() => ({}))
+  const amount = Number(amount_usd)
+  if (!Number.isFinite(amount) || amount < CREDIT_TOPUP_MIN_USD || amount > CREDIT_TOPUP_MAX_USD) {
+    return json({ error: `Choose an amount between $${CREDIT_TOPUP_MIN_USD} and $${CREDIT_TOPUP_MAX_USD}.` }, 400)
+  }
+  const res = await stripeApi(c.env, '/checkout/sessions', {
+    method: 'POST',
+    params: buildStripeCreditCheckoutParams({
+      amountCents: Math.round(amount * 100),
+      userId: user.id,
+      buyerEmail: user.email,
+      successUrl: 'https://sennoric.com/settings.html?topped_up=1#billing',
+      cancelUrl: 'https://sennoric.com/settings.html#billing',
+    }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok || !data.url) {
+    console.error('[billing/credits/checkout] Stripe error:', JSON.stringify(data))
+    return json({ error: 'Could not start checkout right now.' }, 502)
+  }
+  return json({ url: data.url })
+})
+
+// Auto-topup: charge the saved payment method automatically once the
+// balance drops below a threshold, instead of the user having to notice
+// and manually check out again. Requires a payment method already saved
+// (from a prior manual top-up or a Stripe-billed Pro subscription) —
+// there is nothing to charge automatically otherwise.
+app.get('/billing/auto-topup', async (c) => {
+  const user = await requireAuth(c)
+  if (!user) return json({ error: 'Not authenticated' }, 401)
+  return json({
+    enabled: !!user.auto_topup_enabled,
+    threshold_usd: user.auto_topup_threshold_microdollars != null ? microdollarsToUsd(user.auto_topup_threshold_microdollars) : null,
+    amount_usd: user.auto_topup_amount_microdollars != null ? microdollarsToUsd(user.auto_topup_amount_microdollars) : null,
+    has_payment_method: !!(user.stripe_customer_id && user.stripe_default_payment_method),
+  })
+})
+
+app.put('/billing/auto-topup', async (c) => {
+  const user = await requireAuth(c)
+  if (!user) return json({ error: 'Not authenticated' }, 401)
+  const { enabled, threshold_usd, amount_usd } = await c.req.json().catch(() => ({}))
+  if (enabled) {
+    if (!user.stripe_customer_id || !user.stripe_default_payment_method) {
+      return json({ error: 'Add a credit balance manually once first — auto-topup needs a saved payment method.' }, 400)
+    }
+    const threshold = Number(threshold_usd)
+    const amount = Number(amount_usd)
+    if (!Number.isFinite(threshold) || threshold < 0 || threshold > CREDIT_TOPUP_MAX_USD) {
+      return json({ error: 'Choose a valid threshold amount.' }, 400)
+    }
+    if (!Number.isFinite(amount) || amount < CREDIT_TOPUP_MIN_USD || amount > CREDIT_TOPUP_MAX_USD) {
+      return json({ error: `Choose a top-up amount between $${CREDIT_TOPUP_MIN_USD} and $${CREDIT_TOPUP_MAX_USD}.` }, 400)
+    }
+    await c.env.DB.prepare(
+      'UPDATE users SET auto_topup_enabled=1, auto_topup_threshold_microdollars=?, auto_topup_amount_microdollars=? WHERE id=?'
+    ).bind(usdToMicrodollars(threshold), usdToMicrodollars(amount), user.id).run()
+  } else {
+    await c.env.DB.prepare('UPDATE users SET auto_topup_enabled=0 WHERE id=?').bind(user.id).run()
+  }
+  return json({ ok: true })
+})
+
 // Self-service subscription management (cancel, update payment method, view
 // invoices) via Stripe's hosted Customer Portal — no custom cancel UI to
 // build or keep in sync with whatever Stripe adds to the portal later.
@@ -2098,6 +2173,33 @@ app.post('/webhooks/stripe', async (c) => {
     await c.env.DB.prepare(
       'UPDATE users SET plan=?, plan_updated_at=strftime(\'%s\',\'now\'), stripe_customer_id=?, stripe_subscription_id=?, billing_flag=NULL, billing_flag_at=NULL WHERE id=?'
     ).bind('pro', obj.customer, obj.subscription, userId).run()
+    return json({ ok: true })
+  }
+
+  // A pay-as-you-go credit top-up (POST /billing/credits/checkout above).
+  // amount_total is in cents; credit_balance is in microdollars, so ×10,000
+  // converts cents→microdollars directly ($1 = 100 cents = 1,000,000
+  // microdollars). Also captures the resulting payment method so a later
+  // auto-topup can charge it off-session — the PaymentIntent has to be
+  // fetched separately since the checkout.session payload only carries its
+  // id, not the expanded object.
+  if (event.type === 'checkout.session.completed' && obj?.mode === 'payment' && obj?.metadata?.kind === 'credit_topup') {
+    const userId = obj.client_reference_id || obj.metadata?.user_id
+    if (!userId || !obj.amount_total) return json({ ok: true })
+    const creditMicrodollars = Number(obj.amount_total) * 10_000
+    await c.env.DB.prepare('UPDATE users SET credit_balance = credit_balance + ? WHERE id=?')
+      .bind(creditMicrodollars, userId).run()
+    if (obj.customer) {
+      let paymentMethod = null
+      if (obj.payment_intent) {
+        const piRes = await stripeApi(c.env, `/payment_intents/${obj.payment_intent}`).catch(() => null)
+        const pi = piRes && piRes.ok ? await piRes.json().catch(() => null) : null
+        paymentMethod = pi?.payment_method || null
+      }
+      await c.env.DB.prepare(
+        'UPDATE users SET stripe_customer_id=COALESCE(stripe_customer_id, ?), stripe_default_payment_method=COALESCE(?, stripe_default_payment_method) WHERE id=?'
+      ).bind(obj.customer, paymentMethod, userId).run()
+    }
     return json({ ok: true })
   }
 
@@ -6258,6 +6360,54 @@ async function runMessageReview(env, { trigger = 'scheduled', startedBy = null }
   }
 }
 
+// Charges each enabled auto-topup user's saved payment method off-session
+// once their balance drops below their own threshold. Every 4 hours rather
+// than reacting immediately — balance draining to zero mid-request already
+// fails that one request cleanly (402), so there's no urgency, and a wider
+// gap keeps this cheap. auto_topup_last_attempt_at is a ~20h cooldown so a
+// persistently declining card doesn't get hit every single run.
+export async function runAutoTopups(env) {
+  const cutoff = Math.floor(Date.now() / 1000) - 20 * 3600
+  const { results } = await env.DB.prepare(
+    `SELECT id, stripe_customer_id, stripe_default_payment_method, auto_topup_amount_microdollars
+     FROM users
+     WHERE auto_topup_enabled=1
+       AND stripe_customer_id IS NOT NULL AND stripe_default_payment_method IS NOT NULL
+       AND credit_balance < COALESCE(auto_topup_threshold_microdollars, 0)
+       AND (auto_topup_last_attempt_at IS NULL OR auto_topup_last_attempt_at < ?)`
+  ).bind(cutoff).all()
+  for (const user of results) {
+    await env.DB.prepare('UPDATE users SET auto_topup_last_attempt_at=? WHERE id=?')
+      .bind(Math.floor(Date.now() / 1000), user.id).run()
+    const amountCents = Math.round((user.auto_topup_amount_microdollars || 0) / 10_000)
+    if (amountCents < 50) continue // below what's worth an off-session charge
+    try {
+      const res = await stripeApi(env, '/payment_intents', {
+        method: 'POST',
+        params: {
+          amount: String(amountCents),
+          currency: 'usd',
+          customer: user.stripe_customer_id,
+          payment_method: user.stripe_default_payment_method,
+          off_session: 'true',
+          confirm: 'true',
+          'metadata[user_id]': user.id,
+          'metadata[kind]': 'auto_topup',
+        },
+      })
+      const pi = await res.json().catch(() => ({}))
+      if (res.ok && pi.status === 'succeeded') {
+        await env.DB.prepare('UPDATE users SET credit_balance = credit_balance + ? WHERE id=?')
+          .bind(amountCents * 10_000, user.id).run()
+      } else {
+        console.error('[auto-topup] declined for user', user.id, JSON.stringify(pi))
+      }
+    } catch (error) {
+      console.error('[auto-topup] request failed for user', user.id, error)
+    }
+  }
+}
+
 // Cron strings here must match wrangler.toml's [triggers] exactly. Cadence
 // was cut ~5-10x from the original ("0 * * * *" / "* * * * *" / "*/5 * * * *")
 // on 2026-09-11 after these three jobs alone exhausted D1's free-tier daily
@@ -6270,6 +6420,7 @@ app.scheduled = async (event, env, ctx) => {
       purgeExpiredDesktopAuthCodes(env.DB),
       purgeExpiredTrashedChats(env.DB),
       purgeExpiredShares(env.DB),
+      runAutoTopups(env),
     ]))
     return
   }

@@ -322,6 +322,10 @@ export function microdollarsToUsd(value) {
   return Number(((Number(value) || 0) / 1_000_000).toFixed(4))
 }
 
+export function usdToMicrodollars(value) {
+  return Math.round((Number(value) || 0) * 1_000_000)
+}
+
 export function buildSquareCheckoutPayload({
   idempotencyKey,
   locationId,
@@ -413,5 +417,29 @@ export function buildStripePromotionCodeParams({ couponId, code, expiresAt }) {
     'promotion[coupon]': couponId,
     code,
     expires_at: String(expiresAt),
+  }
+}
+
+// One-time (mode=payment, not subscription) checkout for a pay-as-you-go
+// API credit top-up. setup_future_usage='off_session' saves the resulting
+// payment method against the customer so auto-topup can charge it later
+// without the user re-entering card details — the webhook handler reads it
+// back off the completed PaymentIntent, not from anything client-supplied.
+export function buildStripeCreditCheckoutParams({ amountCents, userId, buyerEmail, successUrl, cancelUrl }) {
+  return {
+    mode: 'payment',
+    'line_items[0][price_data][currency]': 'usd',
+    'line_items[0][price_data][product_data][name]': 'Sennoric API credits',
+    'line_items[0][price_data][unit_amount]': String(amountCents),
+    'line_items[0][quantity]': '1',
+    client_reference_id: userId,
+    'metadata[user_id]': userId,
+    'metadata[kind]': 'credit_topup',
+    'payment_intent_data[setup_future_usage]': 'off_session',
+    'payment_intent_data[metadata][user_id]': userId,
+    'payment_intent_data[metadata][kind]': 'credit_topup',
+    customer_email: buyerEmail,
+    success_url: successUrl,
+    cancel_url: cancelUrl,
   }
 }
