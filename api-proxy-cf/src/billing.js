@@ -17,7 +17,15 @@ function bytesToHex(bytes) {
 
 export function normalizeCreditCode(raw) {
   const normalized = String(raw || '').toUpperCase().replace(/[\s-]+/g, '')
-  if (!/^AXION[0-9A-F]{20}$/.test(normalized) && !/^[A-Z0-9]{16}$/.test(normalized)) {
+  // SENNORIC is the current prefix (generateCreditCode below); AXION-prefixed
+  // codes predate the rebrand and are only stored as hashes, so they can
+  // never be migrated — this format must stay accepted indefinitely or any
+  // outstanding one becomes permanently unredeemable.
+  if (
+    !/^SENNORIC[0-9A-F]{20}$/.test(normalized) &&
+    !/^AXION[0-9A-F]{20}$/.test(normalized) &&
+    !/^[A-Z0-9]{16}$/.test(normalized)
+  ) {
     throw new CreditCodeError('Invalid, expired, or fully redeemed code.')
   }
   return normalized
@@ -48,7 +56,7 @@ export function generateCreditCode(compact = false) {
     return code
   }
   const payload = bytesToHex(bytes)
-  return `AXION-${payload.match(/.{1,4}/g).join('-')}`
+  return `SENNORIC-${payload.match(/.{1,4}/g).join('-')}`
 }
 
 export function creditInput(input = {}) {
