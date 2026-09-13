@@ -21,7 +21,8 @@ function makeEnv() {
   database.exec(`
     CREATE TABLE users (
       id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, banned INTEGER NOT NULL DEFAULT 0,
-      token_version INTEGER NOT NULL DEFAULT 0, sandbox_mode TEXT NOT NULL DEFAULT 'ask'
+      token_version INTEGER NOT NULL DEFAULT 0, sandbox_mode TEXT NOT NULL DEFAULT 'ask',
+      special_instructions TEXT DEFAULT NULL, response_language TEXT DEFAULT NULL
     );
     CREATE TABLE email_prefs (
       user_id TEXT PRIMARY KEY, notify_limit INTEGER DEFAULT 1,
@@ -64,6 +65,30 @@ test('partial preference updates leave every unrelated switch unchanged', async 
   await update({ notify_limit: true, notify_announcements: true, notify_scheduled: true })
   await Promise.all([update({ notify_limit: false }), update({ notify_announcements: false })])
   assert.deepEqual(await values(), { notify_limit: 0, notify_announcements: 0, notify_scheduled: 1 })
+})
+
+test('special instructions and response language persist server-side, not just in the browser', async () => {
+  const env = makeEnv()
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${await bearer()}` }
+  const update = (body) => app.request('/account/preferences', { method: 'PUT', headers, body: JSON.stringify(body) }, env)
+  const read = async () => (await app.request('/account/preferences', { headers }, env)).json()
+
+  const defaults = await read()
+  assert.equal(defaults.special_instructions, '')
+  assert.equal(defaults.response_language, 'english')
+
+  await update({ special_instructions: 'Be concise.', response_language: 'french' })
+  const updated = await read()
+  assert.equal(updated.special_instructions, 'Be concise.')
+  assert.equal(updated.response_language, 'french')
+
+  // Over-length input is capped, not rejected outright.
+  await update({ special_instructions: 'x'.repeat(9000) })
+  assert.equal((await read()).special_instructions.length, 8000)
+
+  // Clearing it back to empty stores null, which the GET still reports as ''.
+  await update({ special_instructions: '' })
+  assert.equal((await read()).special_instructions, '')
 })
 
 test('the legacy /dashboard/prefs alias still serves the same data as /account/preferences', async (t) => {

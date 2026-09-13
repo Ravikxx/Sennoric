@@ -4937,7 +4937,12 @@ const getAccountPreferences = async (c) => {
   const user = await requireAuth(c)
   if (!user) return json({ error: 'Not authenticated' }, 401)
   const prefs = await c.env.DB.prepare('SELECT * FROM email_prefs WHERE user_id=?').bind(user.id).first()
-  return json({ notify_limit: 1, notify_announcements: 1, notify_scheduled: 1, ...prefs, sandbox_mode: user.sandbox_mode || 'ask' })
+  return json({
+    notify_limit: 1, notify_announcements: 1, notify_scheduled: 1, ...prefs,
+    sandbox_mode: user.sandbox_mode || 'ask',
+    special_instructions: user.special_instructions || '',
+    response_language: user.response_language || 'english',
+  })
 }
 app.get('/account/preferences', getAccountPreferences)
 app.get('/dashboard/prefs', legacyAlias(getAccountPreferences))
@@ -4945,7 +4950,7 @@ app.get('/dashboard/prefs', legacyAlias(getAccountPreferences))
 const updateAccountPreferences = async (c) => {
   const user = await requireAuth(c)
   if (!user) return json({ error: 'Not authenticated' }, 401)
-  const { notify_limit, notify_announcements, notify_scheduled, sandbox_mode } = await c.req.json().catch(() => ({}))
+  const { notify_limit, notify_announcements, notify_scheduled, sandbox_mode, special_instructions, response_language } = await c.req.json().catch(() => ({}))
   const preference = (value) => (
     typeof value === 'boolean' || value === 0 || value === 1
       ? (value ? 1 : 0)
@@ -4967,6 +4972,14 @@ const updateAccountPreferences = async (c) => {
   ).run()
   if (sandbox_mode === 'ask' || sandbox_mode === 'auto') {
     await c.env.DB.prepare('UPDATE users SET sandbox_mode=? WHERE id=?').bind(sandbox_mode, user.id).run()
+  }
+  if (typeof special_instructions === 'string') {
+    await c.env.DB.prepare('UPDATE users SET special_instructions=? WHERE id=?')
+      .bind(special_instructions.trim().slice(0, 8000) || null, user.id).run()
+  }
+  if (typeof response_language === 'string' && response_language) {
+    await c.env.DB.prepare('UPDATE users SET response_language=? WHERE id=?')
+      .bind(response_language.slice(0, 40), user.id).run()
   }
   return json({ ok: true })
 }
