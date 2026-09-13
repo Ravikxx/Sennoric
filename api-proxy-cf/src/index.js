@@ -834,6 +834,167 @@ function failDesktopIntegration(state, provider, error = 'access_denied') {
   return new Response(null, { status: 302, headers: { Location: callback.toString() } })
 }
 
+// ── Website connections (Notion/GitHub as chat tools, durable) ───────────
+// Distinct from both flows above: /auth/link/:provider signs a user IN with
+// Google/GitHub/Discord, and /auth/desktop/integrations hands the Desktop
+// app a short-lived code whose token is never kept in D1 past that handoff.
+// This flow is the website's own equivalent of the Desktop app's
+// integrations — the user connects Notion/GitHub once, the token is kept
+// (encrypted) so the hosted chat model can use it as a tool on every future
+// message, with no re-auth. It reuses the same OAuth apps and redirect URIs
+// as the Desktop broker (desktopIntegrationAuthUrl below) rather than
+// registering new ones — GitHub/Notion only allow a fixed, pre-registered
+// set of redirect URIs per app, so the signed state's `action` is what
+// distinguishes which flow a given callback belongs to, not the URL.
+const WEB_CONNECTION_PROVIDERS = new Set(['notion', 'github'])
+
+app.get('/connections/:provider/start', async (c) => {
+  const provider = c.req.param('provider')
+  if (!WEB_CONNECTION_PROVIDERS.has(provider)) return new Response('Unsupported connection.', { status: 404 })
+  const user = await sessionUserFromCookie(c)
+  if (!user) {
+    return new Response('You need to be signed in to connect an app. Go back, sign in, then try again.', { status: 401, headers: { 'Content-Type': 'text/plain' } })
+  }
+  const returnUrl = allowedReturn(c.req.query('return') || '')
+  const state = await signState({ action: 'web_connection', uid: user.id, provider, return: returnUrl, exp: Date.now() + 10 * 60 * 1000 }, c.env.TOKEN_SECRET)
+  const authorizationUrl = desktopIntegrationAuthUrl(provider, c.env, state)
+  if (!authorizationUrl) return new Response(`${provider} connections are temporarily unavailable.`, { status: 503, headers: { 'Content-Type': 'text/plain' } })
+  return new Response(null, { status: 302, headers: { Location: authorizationUrl } })
+})
+
+function webConnectionReturnUrl(state, extraParams) {
+  const url = new URL(allowedReturn(state?.return || ''))
+  url.hash = 'connections'
+  for (const [k, v] of Object.entries(extraParams)) url.searchParams.set(k, v)
+  return url.toString()
+}
+
+async function finishWebConnection(c, state, provider, tokenData) {
+  if (state?.action !== 'web_connection' || state.provider !== provider || !state.uid) return null
+  const user = await c.env.DB.prepare('SELECT id, banned FROM users WHERE id=?').bind(state.uid).first()
+  if (!user || user.banned || !tokenData?.access_token) {
+    return new Response('Could not complete this connection. Return to Sennoric and try again.', { status: 400 })
+  }
+  const encrypted = await encryptDesktopIntegrationToken(tokenData, c.env.TOKEN_SECRET)
+  const metadata = provider === 'notion' ? (tokenData.workspace_name || null) : null
+  await c.env.DB.prepare(
+    `INSERT INTO user_connections (user_id, provider, token_payload, metadata, connected_at)
+       VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (user_id, provider) DO UPDATE SET
+       token_payload=excluded.token_payload, metadata=excluded.metadata, connected_at=excluded.connected_at`
+  ).bind(user.id, provider, encrypted, metadata, Math.floor(Date.now() / 1000)).run()
+  return new Response(null, { status: 302, headers: { Location: webConnectionReturnUrl(state, { connected: provider }) } })
+}
+
+function failWebConnection(state, provider, error = 'access_denied') {
+  if (state?.action !== 'web_connection' || state.provider !== provider) return null
+  return new Response(null, { status: 302, headers: { Location: webConnectionReturnUrl(state, { connection_error: error }) } })
+}
+
+app.get('/connections', async (c) => {
+  const user = await requireAuth(c)
+  if (!user) return json({ error: 'Not authenticated' }, 401)
+  const { results } = await c.env.DB.prepare(
+    'SELECT provider, metadata, connected_at FROM user_connections WHERE user_id=?'
+  ).bind(user.id).all()
+  return json({ connections: results })
+})
+
+app.delete('/connections/:provider', async (c) => {
+  const user = await requireAuth(c)
+  if (!user) return json({ error: 'Not authenticated' }, 401)
+  await c.env.DB.prepare('DELETE FROM user_connections WHERE user_id=? AND provider=?')
+    .bind(user.id, c.req.param('provider')).run()
+  return json({ ok: true })
+})
+
+async function getUserConnectionToken(env, userId, provider) {
+  const row = await env.DB.prepare('SELECT token_payload FROM user_connections WHERE user_id=? AND provider=?')
+    .bind(userId, provider).first()
+  if (!row) return null
+  return decryptDesktopIntegrationToken(row.token_payload, env.TOKEN_SECRET).catch(() => null)
+}
+
+// ── Connection tool calls ─────────────────────────────────────────────────
+// Executed server-side (never exposes the raw Notion/GitHub token to the
+// browser) when the chat model calls the corresponding tool — see
+// toolsForChat() in chat.html, which only offers these when /connections
+// reports the provider connected.
+
+app.post('/connections/notion/search', async (c) => {
+  const user = await requireAuth(c)
+  if (!user) return json({ error: 'Not authenticated' }, 401)
+  const token = await getUserConnectionToken(c.env, user.id, 'notion')
+  if (!token) return json({ error: 'Notion is not connected. Connect it in Settings first.' }, 400)
+  const { query } = await c.req.json().catch(() => ({}))
+  const res = await fetch('https://api.notion.com/v1/search', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token.access_token}`,
+      'Notion-Version': '2022-06-28',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query: String(query || '').slice(0, 500), page_size: 10 }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) return json({ error: 'Notion search failed.' }, 502)
+  const results = (data.results || []).map((item) => {
+    const titleProp = item.properties
+      ? Object.values(item.properties).find((p) => p.type === 'title')
+      : null
+    const title = titleProp?.title?.map((t) => t.plain_text).join('') || item.child_page?.title || '(untitled)'
+    return { id: item.id, title, url: item.url, type: item.object }
+  })
+  return json({ results })
+})
+
+app.post('/connections/notion/read', async (c) => {
+  const user = await requireAuth(c)
+  if (!user) return json({ error: 'Not authenticated' }, 401)
+  const token = await getUserConnectionToken(c.env, user.id, 'notion')
+  if (!token) return json({ error: 'Notion is not connected. Connect it in Settings first.' }, 400)
+  const { page_id } = await c.req.json().catch(() => ({}))
+  if (!page_id) return json({ error: 'page_id is required.' }, 400)
+  const res = await fetch(`https://api.notion.com/v1/blocks/${encodeURIComponent(page_id)}/children?page_size=100`, {
+    headers: { Authorization: `Bearer ${token.access_token}`, 'Notion-Version': '2022-06-28' },
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) return json({ error: 'Could not read that Notion page. It may not be shared with this connection.' }, 502)
+  const richText = (arr) => (arr || []).map((t) => t.plain_text).join('')
+  const lines = (data.results || []).map((block) => richText(block[block.type]?.rich_text)).filter(Boolean)
+  return json({ text: lines.join('\n\n').slice(0, 20000) })
+})
+
+app.post('/connections/github/list-repos', async (c) => {
+  const user = await requireAuth(c)
+  if (!user) return json({ error: 'Not authenticated' }, 401)
+  const token = await getUserConnectionToken(c.env, user.id, 'github')
+  if (!token) return json({ error: 'GitHub is not connected. Connect it in Settings first.' }, 400)
+  const res = await fetch('https://api.github.com/user/repos?per_page=30&sort=updated', {
+    headers: { Authorization: `Bearer ${token.access_token}`, 'User-Agent': 'sennoric-api' },
+  })
+  const data = await res.json().catch(() => [])
+  if (!res.ok) return json({ error: 'GitHub request failed.' }, 502)
+  const repos = data.map((r) => ({ full_name: r.full_name, description: r.description, private: r.private, default_branch: r.default_branch }))
+  return json({ repos })
+})
+
+app.post('/connections/github/read-file', async (c) => {
+  const user = await requireAuth(c)
+  if (!user) return json({ error: 'Not authenticated' }, 401)
+  const token = await getUserConnectionToken(c.env, user.id, 'github')
+  if (!token) return json({ error: 'GitHub is not connected. Connect it in Settings first.' }, 400)
+  const { repo, path } = await c.req.json().catch(() => ({}))
+  if (!repo || !path) return json({ error: 'repo and path are required.' }, 400)
+  const res = await fetch(`https://api.github.com/repos/${repo}/contents/${path}`, {
+    headers: { Authorization: `Bearer ${token.access_token}`, 'User-Agent': 'sennoric-api' },
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok || !data.content) return json({ error: 'Could not read that file.' }, 502)
+  const text = atob(data.content.replace(/\n/g, ''))
+  return json({ text: text.slice(0, 20000), truncated: text.length > 20000 })
+})
+
 app.post('/auth/desktop/integrations/token', async (c) => {
   const user = await requireAuth(c)
   if (!user) return json({ error: 'Sign in to Sennoric before connecting an app.' }, 401)
@@ -1131,10 +1292,11 @@ app.get('/auth/github', (c) => {
 app.get('/auth/github/callback', async (c) => {
   const code = c.req.query('code')
   if (!code) {
-    const desktopFailure = failDesktopIntegration(
-      await parseToken(c.req.query('state'), c.env.TOKEN_SECRET), 'github', c.req.query('error') || 'access_denied'
-    )
-    return desktopFailure || new Response('Missing code', { status: 400 })
+    const earlyState = await parseToken(c.req.query('state'), c.env.TOKEN_SECRET)
+    const err = c.req.query('error') || 'access_denied'
+    return failWebConnection(earlyState, 'github', err)
+      || failDesktopIntegration(earlyState, 'github', err)
+      || new Response('Missing code', { status: 400 })
   }
   const return_to = decodeState(c.req.query('state'))
   const signedState = await parseToken(c.req.query('state'), c.env.TOKEN_SECRET)
@@ -1152,9 +1314,13 @@ app.get('/auth/github/callback', async (c) => {
   const githubTokens = await tokenRes.json()
   const { access_token } = githubTokens
   if (!access_token) {
-    const desktopFailure = failDesktopIntegration(signedState, 'github', 'provider_error')
-    return desktopFailure || new Response('GitHub could not authorize this connection. Try again.', { status: 400 })
+    return failWebConnection(signedState, 'github', 'provider_error')
+      || failDesktopIntegration(signedState, 'github', 'provider_error')
+      || new Response('GitHub could not authorize this connection. Try again.', { status: 400 })
   }
+
+  const webConnection = await finishWebConnection(c, signedState, 'github', githubTokens)
+  if (webConnection) return webConnection
 
   const desktopIntegration = await finishDesktopIntegration(c, signedState, 'github', githubTokens)
   if (desktopIntegration) return desktopIntegration
@@ -1181,10 +1347,10 @@ app.get('/auth/notion/callback', async (c) => {
   const signedState = await parseToken(c.req.query('state'), c.env.TOKEN_SECRET)
   const code = c.req.query('code')
   if (!code) {
-    const desktopFailure = failDesktopIntegration(
-      signedState, 'notion', c.req.query('error') || 'access_denied'
-    )
-    return desktopFailure || new Response('Missing code', { status: 400 })
+    const err = c.req.query('error') || 'access_denied'
+    return failWebConnection(signedState, 'notion', err)
+      || failDesktopIntegration(signedState, 'notion', err)
+      || new Response('Missing code', { status: 400 })
   }
 
   const basic = btoa(`${c.env.NOTION_CLIENT_ID}:${c.env.NOTION_CLIENT_SECRET}`)
@@ -1199,10 +1365,12 @@ app.get('/auth/notion/callback', async (c) => {
   })
   const tokens = await tokenRes.json()
   if (!tokens.access_token) {
-    const desktopFailure = failDesktopIntegration(signedState, 'notion', 'provider_error')
-    return desktopFailure || new Response('Notion could not authorize this connection. Try again.', { status: 400 })
+    return failWebConnection(signedState, 'notion', 'provider_error')
+      || failDesktopIntegration(signedState, 'notion', 'provider_error')
+      || new Response('Notion could not authorize this connection. Try again.', { status: 400 })
   }
-  return await finishDesktopIntegration(c, signedState, 'notion', tokens)
+  return await finishWebConnection(c, signedState, 'notion', tokens)
+    || await finishDesktopIntegration(c, signedState, 'notion', tokens)
     || new Response('This Notion connection request expired. Return to Sennoric and try again.', { status: 400 })
 })
 
