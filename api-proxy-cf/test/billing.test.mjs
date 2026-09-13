@@ -279,6 +279,12 @@ async function stripeSignature(rawBody, secret) {
   return `t=${t},v1=${hex}`
 }
 
+test('a pre-rebrand AXION-prefixed code still normalizes — outstanding codes are hashed and can never be migrated', () => {
+  const legacy = 'AXION-ABCD-1234-EF56-7890-ABCD'
+  assert.equal(normalizeCreditCode(legacy), 'AXIONABCD1234EF567890ABCD')
+  assert.equal(normalizeCreditCode(legacy.toLowerCase()), 'AXIONABCD1234EF567890ABCD')
+})
+
 test('credit codes are normalized but plaintext is never stored', async () => {
   const db = new D1TestDatabase()
   addUser(db, 'u1')
@@ -287,7 +293,7 @@ test('credit codes are normalized but plaintext is never stored', async () => {
     max_redemptions: 1,
     note: 'Launch credit',
   })
-  assert.match(created.code, /^AXION-(?:[0-9A-F]{4}-){4}[0-9A-F]{4}$/)
+  assert.match(created.code, /^SENNORIC-(?:[0-9A-F]{4}-){4}[0-9A-F]{4}$/)
   assert.equal(normalizeCreditCode(created.code.toLowerCase()), created.code.replaceAll('-', ''))
   const stored = db.prepare('SELECT * FROM credit_codes WHERE id=?').bind(created.id).first()
   assert.equal(stored.credit_microdollars, 5_000_000)
@@ -581,7 +587,7 @@ test('authenticated admin creation and user redemption routes work end to end', 
   }, env)
   assert.equal(createResponse.status, 201)
   const created = await createResponse.json()
-  assert.match(created.code, /^AXION-/)
+  assert.match(created.code, /^SENNORIC-/)
   assert.equal(created.credit_usd, 3.75)
 
   const redeem = () => app.request('/billing/credits/redeem', {
