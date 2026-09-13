@@ -69,6 +69,11 @@ class D1TestDatabase {
         stripe_subscription_id TEXT,
         billing_flag TEXT DEFAULT NULL,
         billing_flag_at INTEGER DEFAULT NULL,
+        stripe_default_payment_method TEXT DEFAULT NULL,
+        auto_topup_enabled INTEGER NOT NULL DEFAULT 0,
+        auto_topup_threshold_microdollars INTEGER DEFAULT NULL,
+        auto_topup_amount_microdollars INTEGER DEFAULT NULL,
+        auto_topup_last_attempt_at INTEGER DEFAULT NULL,
         created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
       );
       CREATE TABLE credit_codes (
@@ -131,8 +136,15 @@ class D1TestDatabase {
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(id),
         org_id TEXT REFERENCES orgs(id),
+        key_value TEXT UNIQUE,
+        scopes TEXT DEFAULT NULL,
         requests INTEGER NOT NULL DEFAULT 0,
-        revoked INTEGER NOT NULL DEFAULT 0
+        revoked INTEGER NOT NULL DEFAULT 0,
+        month_start TEXT DEFAULT NULL,
+        month_requests INTEGER NOT NULL DEFAULT 0,
+        month_cost INTEGER NOT NULL DEFAULT 0,
+        tokens INTEGER NOT NULL DEFAULT 0,
+        last_used INTEGER DEFAULT NULL
       );
       CREATE TABLE admin_account_edits (
         id TEXT PRIMARY KEY,
@@ -1670,6 +1682,109 @@ test('exhausted allowances draw down credits and then block with 429', async () 
       body: JSON.stringify({ messages: [{ role: 'user', content: 'hi again' }] }),
     }, env, executionCtx().ctx)
     assert.equal(blocked.status, 429)
+  } finally {
+    globalThis.fetch = realFetch
+  }
+})
+
+test('different models are priced at their own per-million-token rate, not one global rate', async () => {
+  const db = new D1TestDatabase()
+  const secret = 'per-model-pricing-secret'
+  addUser(db, 'member')
+  const token = await sessionToken('member', secret)
+  const env = { DB: db, TOKEN_SECRET: secret, RUNPOD_ENDPOINT_ID: 'ep-test', RUNPOD_API_KEY: 'rp-test-key' }
+  const realFetch = globalThis.fetch
+  globalThis.fetch = lumenFetchStub({ prompt_tokens: 1000, completion_tokens: 1000, total_tokens: 2000 })
+  try {
+    const { ctx, settle } = executionCtx()
+    const res = await app.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'glyph', messages: [{ role: 'user', content: 'hi' }] }),
+    }, env, ctx)
+    assert.equal(res.status, 200)
+    await settle()
+    // Glyph 1.1: 1000 in × $0.05/M + 1000 out × $0.20/M = 50 + 200 = 250 microdollars
+    // (Fresco 1.3's default rate would have produced 150 + 500 = 650 instead.)
+    const user = db.prepare('SELECT included_week_cost FROM users WHERE id=?').bind('member').first()
+    assert.equal(user.included_week_cost, 250)
+  } finally {
+    globalThis.fetch = realFetch
+  }
+})
+
+test('an API key has no free allowance at all — it is blocked at zero credit balance even with a fresh week/window', async () => {
+  const db = new D1TestDatabase()
+  const secret = 'api-key-no-free-tier-secret'
+  addUser(db, 'member')
+  db.prepare('INSERT INTO api_keys (id, user_id, key_value) VALUES (?,?,?)')
+    .bind('key-1', 'member', 'sennoric-sk-test1234567890').run()
+  const env = { DB: db, TOKEN_SECRET: secret, RUNPOD_ENDPOINT_ID: 'ep-test', RUNPOD_API_KEY: 'rp-test-key' }
+  const realFetch = globalThis.fetch
+  globalThis.fetch = lumenFetchStub({ prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 })
+  try {
+    const res = await app.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer sennoric-sk-test1234567890', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
+    }, env, executionCtx().ctx)
+    assert.equal(res.status, 402)
+    const data = await res.json()
+    assert.equal(data.error.type, 'insufficient_credits_error')
+  } finally {
+    globalThis.fetch = realFetch
+  }
+})
+
+test('an API key with credits charges 100% against the balance, never touching the free-plan week/window counters', async () => {
+  const db = new D1TestDatabase()
+  const secret = 'api-key-pay-only-secret'
+  addUser(db, 'member')
+  db.prepare('UPDATE users SET credit_balance=10000 WHERE id=?').bind('member').run()
+  db.prepare('INSERT INTO api_keys (id, user_id, key_value) VALUES (?,?,?)')
+    .bind('key-1', 'member', 'sennoric-sk-test1234567890').run()
+  const env = { DB: db, TOKEN_SECRET: secret, RUNPOD_ENDPOINT_ID: 'ep-test', RUNPOD_API_KEY: 'rp-test-key' }
+  const realFetch = globalThis.fetch
+  globalThis.fetch = lumenFetchStub({ prompt_tokens: 1000, completion_tokens: 1000, total_tokens: 2000 })
+  try {
+    const { ctx, settle } = executionCtx()
+    const res = await app.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer sennoric-sk-test1234567890', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'fresco-1.3', messages: [{ role: 'user', content: 'hi' }] }),
+    }, env, ctx)
+    assert.equal(res.status, 200)
+    await settle()
+    // 1000×0.15 + 1000×0.50 = 650 microdollars, all from credit_balance —
+    // included_week_cost/included_window_cost stay at 0 since an API key
+    // never draws from the free allowance at all.
+    const user = db.prepare('SELECT included_week_cost, included_window_cost, credit_balance FROM users WHERE id=?')
+      .bind('member').first()
+    assert.equal(user.included_week_cost, 0)
+    assert.equal(user.included_window_cost, 0)
+    assert.equal(user.credit_balance, 10000 - 650)
+  } finally {
+    globalThis.fetch = realFetch
+  }
+})
+
+test('the chat interface (session token, no API key) is unaffected by the API-key pay-only change', async () => {
+  const db = new D1TestDatabase()
+  const secret = 'chat-still-free-secret'
+  addUser(db, 'member')
+  const token = await sessionToken('member', secret)
+  const env = { DB: db, TOKEN_SECRET: secret, RUNPOD_ENDPOINT_ID: 'ep-test', RUNPOD_API_KEY: 'rp-test-key' }
+  const realFetch = globalThis.fetch
+  globalThis.fetch = lumenFetchStub({ prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 })
+  try {
+    const res = await app.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'hi' }] }),
+    }, env, executionCtx().ctx)
+    // Zero credit balance, but this is session-token traffic, not an API
+    // key — it still gets the free weekly/window allowance and succeeds.
+    assert.equal(res.status, 200)
   } finally {
     globalThis.fetch = realFetch
   }

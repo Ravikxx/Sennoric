@@ -3970,9 +3970,28 @@ async function purgeExpiredShares(db) {
 
 const FREE_KEY_CAP      = 3     // max non-revoked API keys, free plan (pro is uncapped)
 
-// Fresco pricing — also the unit the pay-as-you-go credits feature will use.
+// Fresco 1.3 pricing — also the default/fallback rate below and the figure
+// shown on /account for "current metering rate" (a single flagship number,
+// not a full per-model breakdown).
 const FRESCO_INPUT_PER_M_USD  = 0.15
 const FRESCO_OUTPUT_PER_M_USD = 0.50
+
+// Per-model rates, in USD per million tokens — numerically identical to
+// microdollars-per-token (1 microdollar = $0.000001, and $X per 1e6 tokens
+// = X microdollars per token), which is what makes requestCostMicrodollars
+// below able to multiply a raw token count by this value directly. Keyed on
+// the same model ids /v1/models and /v1/chat/completions already accept —
+// 'fresco' (bare) is the current id for Fresco 1.2.5; there is no separate
+// 'fresco-1.2.5' id yet (see N2 in WEBSITE_BUGS.md).
+const MODEL_RATES_PER_M_USD = {
+  'fresco-1.3': { input: FRESCO_INPUT_PER_M_USD, output: FRESCO_OUTPUT_PER_M_USD },
+  'fresco':     { input: 0.10, output: 0.35 }, // Fresco 1.2.5
+  'glyph':      { input: 0.05, output: 0.20 }, // Glyph 1.1
+}
+function rateForModel(model) {
+  return MODEL_RATES_PER_M_USD[String(model || '').toLowerCase()]
+    || { input: FRESCO_INPUT_PER_M_USD, output: FRESCO_OUTPUT_PER_M_USD }
+}
 
 // Usage budgets, denominated in microdollars (1,000,000 = $1) rather than raw
 // request or token counts. Request counts are a bad proxy for cost (a 5-token
@@ -4060,8 +4079,9 @@ function sandboxConfigForPlan(plan) {
     : { networkAccess: true, timeoutMs: SANDBOX_BASE_TIMEOUT_MS, weeklyCap: FREE_SANDBOX_WEEKLY_CAP }
 }
 
-function requestCostMicrodollars(inputTokens, outputTokens) {
-  return Math.round(inputTokens * FRESCO_INPUT_PER_M_USD + outputTokens * FRESCO_OUTPUT_PER_M_USD)
+function requestCostMicrodollars(inputTokens, outputTokens, model) {
+  const rate = rateForModel(model)
+  return Math.round(inputTokens * rate.input + outputTokens * rate.output)
 }
 
 // ~4 chars/token — the standard rough heuristic (same one the CLI uses
@@ -4385,7 +4405,15 @@ app.post('/v1/chat/completions', async (c) => {
   const auditRequestMessages = JSON.stringify(body.messages)
 
   if (billedUser) {
-    const { weeklyBudget: planWeeklyBudget, windowBudget: planWindowBudget } = await boostedLimitsForPlan(billedUser.plan, c.env)
+    // API-key traffic is pay-only — no free weekly/window allowance, ever.
+    // Passing 0/0 budgets makes canStartUsage/chargeAccountUsage draw
+    // exclusively from credit_balance without any separate code path: with
+    // both budgets at 0 there's never any "included" room to draw down, so
+    // 100% of the cost lands on credit_balance every time. Session-token
+    // (chat interface) traffic is unaffected and keeps its Free/Pro allowance.
+    const { weeklyBudget: planWeeklyBudget, windowBudget: planWindowBudget } = keyRow
+      ? { weeklyBudget: 0, windowBudget: 0 }
+      : await boostedLimitsForPlan(billedUser.plan, c.env)
 
     // Scope check — if key has scopes, requested model must be in the list
     if (keyRow?.scopes) {
@@ -4405,6 +4433,13 @@ app.post('/v1/chat/completions', async (c) => {
       await c.env.DB.prepare('UPDATE api_keys SET month_requests=0, month_cost=0, month_start=? WHERE id=?').bind(calendarMonth, keyRow.id).run()
       keyRow.month_requests = 0
       keyRow.month_cost = 0
+    }
+    if (keyRow && (accountUsage.credit_balance || 0) <= 0) {
+      return json({ error: {
+        message: 'No API credit balance remaining. Add credits in Settings > Usage & billing to continue.',
+        type: 'insufficient_credits_error',
+        credit_balance_usd: microdollarsToUsd(Math.max(0, accountUsage.credit_balance || 0)),
+      } }, 402)
     }
     if (!canStartUsage(accountUsage, planWeeklyBudget, planWindowBudget)
         && accountUsage.included_week_cost >= planWeeklyBudget) {
@@ -4444,7 +4479,7 @@ app.post('/v1/chat/completions', async (c) => {
     // like the old request-count version — cost jumps by a variable amount
     // per request, so it can skip right over an exact target).
     async function recordUsage(inputTokens, outputTokens) {
-      const cost = requestCostMicrodollars(inputTokens, outputTokens)
+      const cost = requestCostMicrodollars(inputTokens, outputTokens, body.model)
       const totalTokens = inputTokens + outputTokens
       const chargedUsage = await chargeAccountUsage(
         c.env.DB,
