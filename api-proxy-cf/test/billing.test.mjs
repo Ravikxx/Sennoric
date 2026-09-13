@@ -18,7 +18,7 @@ import {
   WEEK_MS,
   WINDOW_MS,
 } from '../src/billing.js'
-import app from '../src/index.js'
+import app, { runAutoTopups } from '../src/index.js'
 
 class Statement {
   constructor(database, sql, values = []) {
@@ -699,6 +699,196 @@ test('billing portal refuses a user with no Stripe subscription, without calling
     method: 'POST', headers: { Authorization: `Bearer ${token}` },
   }, env)
   assert.equal(res.status, 400)
+})
+
+test('credit checkout rejects amounts outside $5-$500 without calling Stripe', async () => {
+  const db = new D1TestDatabase()
+  const secret = 'credit-checkout-range-secret'
+  addUser(db, 'u1')
+  const token = await sessionToken('u1', secret)
+  const env = { DB: db, TOKEN_SECRET: secret, STRIPE_SECRET_KEY: 'sk_test_x' }
+  mock.method(globalThis, 'fetch', async () => { throw new Error('should not call Stripe') })
+
+  for (const amount_usd of [4.99, 500.01, 0, -5, 'abc', undefined]) {
+    const res = await app.request('/billing/credits/checkout', {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount_usd }),
+    }, env)
+    assert.equal(res.status, 400, `amount_usd=${amount_usd} should be rejected`)
+  }
+})
+
+test('credit checkout starts a one-time payment session, not a subscription', async () => {
+  const db = new D1TestDatabase()
+  const secret = 'credit-checkout-ok-secret'
+  addUser(db, 'u1')
+  const token = await sessionToken('u1', secret)
+  const env = { DB: db, TOKEN_SECRET: secret, STRIPE_SECRET_KEY: 'sk_test_x' }
+
+  mock.method(globalThis, 'fetch', async (url, init) => {
+    assert.equal(String(url), 'https://api.stripe.com/v1/checkout/sessions')
+    const body = new URLSearchParams(init.body)
+    assert.equal(body.get('mode'), 'payment')
+    assert.equal(body.get('line_items[0][price_data][unit_amount]'), '2500')
+    assert.equal(body.get('metadata[kind]'), 'credit_topup')
+    assert.equal(body.get('payment_intent_data[setup_future_usage]'), 'off_session')
+    assert.equal(body.get('client_reference_id'), 'u1')
+    return Response.json({ url: 'https://checkout.stripe.com/session-test' })
+  })
+
+  const res = await app.request('/billing/credits/checkout', {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ amount_usd: 25 }),
+  }, env)
+  assert.equal(res.status, 200)
+  assert.equal((await res.json()).url, 'https://checkout.stripe.com/session-test')
+})
+
+test('a completed credit top-up credits the balance and saves the payment method for auto-topup', async () => {
+  const db = new D1TestDatabase()
+  const webhookSecret = 'whsec_test'
+  addUser(db, 'u1')
+  const env = { DB: db, STRIPE_SECRET_KEY: 'sk_test_x', STRIPE_WEBHOOK_SECRET: webhookSecret }
+
+  mock.method(globalThis, 'fetch', async (url) => {
+    assert.equal(String(url), 'https://api.stripe.com/v1/payment_intents/pi_test1')
+    return Response.json({ id: 'pi_test1', payment_method: 'pm_test1' })
+  })
+
+  const body = JSON.stringify({
+    type: 'checkout.session.completed',
+    data: { object: {
+      mode: 'payment', client_reference_id: 'u1', metadata: { kind: 'credit_topup' },
+      amount_total: 2500, customer: 'cus_test1', payment_intent: 'pi_test1',
+    } },
+  })
+  const res = await app.request('/webhooks/stripe', {
+    method: 'POST',
+    headers: { 'stripe-signature': await stripeSignature(body, webhookSecret) },
+    body,
+  }, env)
+  assert.equal(res.status, 200)
+
+  const row = db.prepare("SELECT credit_balance, stripe_customer_id, stripe_default_payment_method FROM users WHERE id='u1'").first()
+  assert.equal(row.credit_balance, 25_000_000) // $25 = 25,000,000 microdollars
+  assert.equal(row.stripe_customer_id, 'cus_test1')
+  assert.equal(row.stripe_default_payment_method, 'pm_test1')
+})
+
+test('a subscription checkout does not fall through to the credit-topup branch', async () => {
+  const db = new D1TestDatabase()
+  const webhookSecret = 'whsec_test'
+  addUser(db, 'u1')
+  const env = { DB: db, STRIPE_SECRET_KEY: 'sk_test_x', STRIPE_WEBHOOK_SECRET: webhookSecret }
+  mock.method(globalThis, 'fetch', async () => { throw new Error('should not call Stripe for a subscription event') })
+
+  const body = JSON.stringify({
+    type: 'checkout.session.completed',
+    data: { object: { mode: 'subscription', client_reference_id: 'u1', customer: 'cus_test1', subscription: 'sub_test1' } },
+  })
+  const res = await app.request('/webhooks/stripe', {
+    method: 'POST', headers: { 'stripe-signature': await stripeSignature(body, webhookSecret) }, body,
+  }, env)
+  assert.equal(res.status, 200)
+  assert.equal(db.prepare("SELECT credit_balance FROM users WHERE id='u1'").first().credit_balance, 0)
+})
+
+test('auto-topup cannot be enabled without a saved payment method', async () => {
+  const db = new D1TestDatabase()
+  const secret = 'auto-topup-no-pm-secret'
+  addUser(db, 'u1')
+  const token = await sessionToken('u1', secret)
+  const env = { DB: db, TOKEN_SECRET: secret }
+  const res = await app.request('/billing/auto-topup', {
+    method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: true, threshold_usd: 5, amount_usd: 20 }),
+  }, env)
+  assert.equal(res.status, 400)
+  assert.equal(db.prepare("SELECT auto_topup_enabled FROM users WHERE id='u1'").first().auto_topup_enabled, 0)
+})
+
+test('auto-topup can be enabled once a payment method exists, and disabled again', async () => {
+  const db = new D1TestDatabase()
+  const secret = 'auto-topup-toggle-secret'
+  addUser(db, 'u1')
+  db.prepare("UPDATE users SET stripe_customer_id='cus_1', stripe_default_payment_method='pm_1' WHERE id='u1'").run()
+  const token = await sessionToken('u1', secret)
+  const env = { DB: db, TOKEN_SECRET: secret }
+
+  const enableRes = await app.request('/billing/auto-topup', {
+    method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: true, threshold_usd: 5, amount_usd: 20 }),
+  }, env)
+  assert.equal(enableRes.status, 200)
+  const readRes = await app.request('/billing/auto-topup', { headers: { Authorization: `Bearer ${token}` } }, env)
+  const read = await readRes.json()
+  assert.deepEqual(read, { enabled: true, threshold_usd: 5, amount_usd: 20, has_payment_method: true })
+
+  const disableRes = await app.request('/billing/auto-topup', {
+    method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: false }),
+  }, env)
+  assert.equal(disableRes.status, 200)
+  assert.equal(db.prepare("SELECT auto_topup_enabled FROM users WHERE id='u1'").first().auto_topup_enabled, 0)
+})
+
+test('runAutoTopups charges an eligible user and credits the balance on success', async () => {
+  const db = new D1TestDatabase()
+  addUser(db, 'u1')
+  db.prepare(
+    `UPDATE users SET credit_balance=1_000_000, stripe_customer_id='cus_1', stripe_default_payment_method='pm_1',
+     auto_topup_enabled=1, auto_topup_threshold_microdollars=5_000_000, auto_topup_amount_microdollars=20_000_000 WHERE id='u1'`
+  ).run()
+  const env = { DB: db, STRIPE_SECRET_KEY: 'sk_test_x' }
+  mock.method(globalThis, 'fetch', async (url, init) => {
+    assert.equal(String(url), 'https://api.stripe.com/v1/payment_intents')
+    const body = new URLSearchParams(init.body)
+    assert.equal(body.get('amount'), '2000')
+    assert.equal(body.get('off_session'), 'true')
+    assert.equal(body.get('confirm'), 'true')
+    return Response.json({ id: 'pi_auto1', status: 'succeeded' })
+  })
+  await runAutoTopups(env)
+  const row = db.prepare("SELECT credit_balance, auto_topup_last_attempt_at FROM users WHERE id='u1'").first()
+  assert.equal(row.credit_balance, 1_000_000 + 20_000_000)
+  assert.ok(row.auto_topup_last_attempt_at > 0)
+})
+
+test('runAutoTopups does not credit the balance when Stripe declines the charge', async () => {
+  const db = new D1TestDatabase()
+  addUser(db, 'u1')
+  db.prepare(
+    `UPDATE users SET credit_balance=0, stripe_customer_id='cus_1', stripe_default_payment_method='pm_1',
+     auto_topup_enabled=1, auto_topup_threshold_microdollars=5_000_000, auto_topup_amount_microdollars=20_000_000 WHERE id='u1'`
+  ).run()
+  const env = { DB: db, STRIPE_SECRET_KEY: 'sk_test_x' }
+  mock.method(globalThis, 'fetch', async () => Response.json({ id: 'pi_auto1', status: 'requires_action' }))
+  await runAutoTopups(env)
+  assert.equal(db.prepare("SELECT credit_balance FROM users WHERE id='u1'").first().credit_balance, 0)
+})
+
+test('runAutoTopups skips users above their own threshold, without connected accounts, or already attempted recently', async () => {
+  const db = new D1TestDatabase()
+  addUser(db, 'above-threshold')
+  addUser(db, 'no-payment-method')
+  addUser(db, 'recently-attempted')
+  db.prepare(
+    `UPDATE users SET credit_balance=10_000_000, stripe_customer_id='cus_1', stripe_default_payment_method='pm_1',
+     auto_topup_enabled=1, auto_topup_threshold_microdollars=5_000_000, auto_topup_amount_microdollars=20_000_000 WHERE id='above-threshold'`
+  ).run()
+  db.prepare(
+    `UPDATE users SET credit_balance=0, auto_topup_enabled=1,
+     auto_topup_threshold_microdollars=5_000_000, auto_topup_amount_microdollars=20_000_000 WHERE id='no-payment-method'`
+  ).run()
+  db.prepare(
+    `UPDATE users SET credit_balance=0, stripe_customer_id='cus_1', stripe_default_payment_method='pm_1',
+     auto_topup_enabled=1, auto_topup_threshold_microdollars=5_000_000, auto_topup_amount_microdollars=20_000_000,
+     auto_topup_last_attempt_at=? WHERE id='recently-attempted'`
+  ).bind(Math.floor(Date.now() / 1000) - 3600).run()
+  const env = { DB: db, STRIPE_SECRET_KEY: 'sk_test_x' }
+  mock.method(globalThis, 'fetch', async () => { throw new Error('should not charge anyone in this scenario') })
+  await runAutoTopups(env)
+  assert.equal(db.prepare("SELECT credit_balance FROM users WHERE id='above-threshold'").first().credit_balance, 10_000_000)
 })
 
 test('a full refund downgrades the user and cancels the Stripe subscription', async () => {
