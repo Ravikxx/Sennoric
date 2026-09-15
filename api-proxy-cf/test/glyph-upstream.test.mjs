@@ -7,7 +7,7 @@ import {
   proxyGlyphRequest,
 } from '../src/glyph-upstream.js'
 
-const env = { RUNPOD_GLYPH_ENDPOINT_ID: 'ep-glyph-test', RUNPOD_API_KEY: 'rp-test-key' }
+const env = { RUNPOD_VEIL_ENDPOINT_ID: 'ep-glyph-test', RUNPOD_API_KEY: 'rp-test-key' }
 
 const SERVED_MODEL_NAME = 'SennoricLabsAI/Glyph-1.1:Q4_K_M'
 

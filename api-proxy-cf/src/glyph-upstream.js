@@ -2,9 +2,16 @@
 // server, same setup as Fresco (see fresco-upstream.js) but a separate endpoint ID
 // and a much smaller/cheaper GPU tier, since Glyph is a 3B GGUF model rather than
 // Fresco's 8B. Shares the same RUNPOD_API_KEY (one RunPod account, two endpoints).
+//
+// The env var is still RUNPOD_VEIL_ENDPOINT_ID — that's the deployed Cloudflare
+// secret's actual name, left over from before the Veil -> Glyph rename. Every
+// call here briefly pointed at RUNPOD_GLYPH_ENDPOINT_ID, which was never
+// actually set as a secret, so it resolved to `undefined` in the RunPod URL
+// and broke every real Glyph request. Don't rename this back without adding
+// the new secret first.
 
 function runpodBaseUrl(env) {
-  return `https://api.runpod.ai/v2/${env.RUNPOD_GLYPH_ENDPOINT_ID}/openai/v1`
+  return `https://api.runpod.ai/v2/${env.RUNPOD_VEIL_ENDPOINT_ID}/openai/v1`
 }
 
 function errorResponse(message, status = 502) {
@@ -74,7 +81,7 @@ export async function proxyGlyphRequest(body, env, fetchImpl = fetch) {
 // API is reachable, not that a worker happens to be warm right now.
 export async function probeGlyphHealth(env, fetchImpl = fetch, timeoutMs = 6000) {
   try {
-    const response = await fetchImpl(`https://api.runpod.ai/v2/${env.RUNPOD_GLYPH_ENDPOINT_ID}/health`, {
+    const response = await fetchImpl(`https://api.runpod.ai/v2/${env.RUNPOD_VEIL_ENDPOINT_ID}/health`, {
       headers: { Authorization: `Bearer ${env.RUNPOD_API_KEY}` },
       signal: AbortSignal.timeout(timeoutMs),
     })
@@ -86,5 +93,5 @@ export async function probeGlyphHealth(env, fetchImpl = fetch, timeoutMs = 6000)
 
 export const GLYPH_UPSTREAM_URLS = {
   chat: (env) => `${runpodBaseUrl(env)}/chat/completions`,
-  health: (env) => `https://api.runpod.ai/v2/${env.RUNPOD_GLYPH_ENDPOINT_ID}/health`,
+  health: (env) => `https://api.runpod.ai/v2/${env.RUNPOD_VEIL_ENDPOINT_ID}/health`,
 }

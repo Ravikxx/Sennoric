@@ -1,8 +1,13 @@
 import { probeFrescoHealth } from './fresco-upstream.js'
+import { probeGlyphHealth } from './glyph-upstream.js'
+import { probeFresco13Health } from './fresco13-upstream.js'
 
 export const SERVICES = [
   { key: 'sennoric_api', label: 'Sennoric API' },
-  { key: 'fresco', label: 'Fresco model' },
+  { key: 'models', label: 'Models' },
+  { key: 'fresco_13', label: 'Fresco 1.3' },
+  { key: 'fresco', label: 'Fresco 1.2.5' },
+  { key: 'glyph', label: 'Glyph 1.1' },
   { key: 'website', label: 'Sennoric website' },
 ]
 
@@ -40,13 +45,31 @@ async function checkSennoricApi(env, appFetch) {
   }
 }
 
-async function checkFresco(env, fetchImpl) {
-  try {
-    const up = await probeFrescoHealth(env, fetchImpl, 8000)
-    return { service: 'fresco', status: up ? 'up' : 'down', detail: up ? '' : 'Health probe reported the model as not ready' }
-  } catch (err) {
-    return { service: 'fresco', status: 'down', detail: String((err && err.message) || err) }
+// Probes the three hosted models once each, then derives the individual
+// per-model results plus one "Models" aggregate from the same three calls
+// rather than issuing a fourth network round-trip. Fresco 1.3 isn't on the
+// public API yet, so it's excluded from the aggregate — "Models" reflects
+// what a customer can actually use today (Fresco 1.2.5, Glyph).
+async function checkModels(env, fetchImpl) {
+  const probe = (fn, service, notReadyDetail) =>
+    fn(env, fetchImpl, 8000)
+      .then((up) => ({ service, status: up ? 'up' : 'down', detail: up ? '' : notReadyDetail }))
+      .catch((err) => ({ service, status: 'down', detail: String((err && err.message) || err) }))
+
+  const [fresco, fresco13, glyph] = await Promise.all([
+    probe(probeFrescoHealth, 'fresco', 'Health probe reported Fresco 1.2.5 as not ready'),
+    probe(probeFresco13Health, 'fresco_13', 'Health probe reported Fresco 1.3 as not ready'),
+    probe(probeGlyphHealth, 'glyph', 'Health probe reported Glyph 1.1 as not ready'),
+  ])
+
+  const modelsUp = fresco.status === 'up' && glyph.status === 'up'
+  const models = {
+    service: 'models',
+    status: modelsUp ? 'up' : 'down',
+    detail: modelsUp ? '' : 'One or more hosted models is not responding',
   }
+
+  return [fresco, fresco13, glyph, models]
 }
 
 async function checkWebsite(env, fetchImpl) {
@@ -153,11 +176,12 @@ async function evaluateIncident(env, result, nowIso) {
 
 export async function runStatusChecks(env, fetchImpl = fetch, appFetch = fetchImpl) {
   const nowIso = new Date().toISOString()
-  const results = await Promise.all([
+  const [sennoricApi, modelResults, website] = await Promise.all([
     checkSennoricApi(env, appFetch),
-    checkFresco(env, fetchImpl),
+    checkModels(env, fetchImpl),
     checkWebsite(env, fetchImpl),
   ])
+  const results = [sennoricApi, ...modelResults, website]
 
   await env.DB.batch(
     results.map((r) =>
