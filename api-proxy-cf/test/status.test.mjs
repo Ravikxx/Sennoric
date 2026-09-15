@@ -54,14 +54,24 @@ class D1TestDatabase {
 }
 
 function makeEnv() {
-  return { DB: new D1TestDatabase(), RUNPOD_ENDPOINT_ID: 'ep', RUNPOD_API_KEY: 'key' }
+  return {
+    DB: new D1TestDatabase(),
+    RUNPOD_ENDPOINT_ID: 'ep',
+    RUNPOD_FRESCO13_ENDPOINT_ID: 'ep13',
+    RUNPOD_VEIL_ENDPOINT_ID: 'ep-glyph',
+    RUNPOD_API_KEY: 'key',
+  }
 }
 
-// fetchImpl stub: controls whether the Sennoric API worker, the Fresco (RunPod)
-// health check, and the website reachability check each report healthy.
-function fetchStub({ sennoricApiUp = true, frescoUp = true, websiteUp = true } = {}) {
+// fetchImpl stub: controls whether the Sennoric API worker, each hosted
+// model's RunPod health check, and the website reachability check each
+// report healthy. The three RunPod probes share a host, so they're told
+// apart by which endpoint id (from makeEnv) shows up in the URL.
+function fetchStub({ sennoricApiUp = true, frescoUp = true, fresco13Up = true, glyphUp = true, websiteUp = true } = {}) {
   return async (url) => {
     const s = typeof url === 'string' ? url : url.url
+    if (s.includes('/v2/ep13/')) return { ok: fresco13Up }
+    if (s.includes('/v2/ep-glyph/')) return { ok: glyphUp }
     if (s.includes('runpod.ai')) return { ok: frescoUp }
     if (s.includes('api.sennoric.com')) return { ok: sennoricApiUp }
     return { ok: websiteUp }
@@ -72,7 +82,7 @@ test('runStatusChecks records a check row per service', async () => {
   const env = makeEnv()
   await runStatusChecks(env, fetchStub())
   const rows = env.DB.prepare('SELECT * FROM status_checks').all().results
-  assert.equal(rows.length, 3)
+  assert.equal(rows.length, 6)
   assert.ok(rows.every((r) => r.status === 'up'))
 })
 
@@ -84,14 +94,16 @@ test('opens an incident after two consecutive failing checks, not after one', as
 
   await runStatusChecks(env, fetchStub({ frescoUp: false }))
   incidents = env.DB.prepare('SELECT * FROM status_incidents').all().results
-  assert.equal(incidents.length, 1)
-  assert.equal(incidents[0].service, 'fresco')
-  assert.equal(incidents[0].status, 'investigating')
-  assert.equal(incidents[0].auto_created, 1)
+  // Fresco being down also drags the "models" aggregate down, so both open.
+  assert.equal(incidents.length, 2)
+  const frescoIncident = incidents.find((i) => i.service === 'fresco')
+  assert.ok(frescoIncident)
+  assert.equal(frescoIncident.status, 'investigating')
+  assert.equal(frescoIncident.auto_created, 1)
 
   const updates = env.DB.prepare('SELECT * FROM status_incident_updates').all().results
-  assert.equal(updates.length, 1)
-  assert.match(updates[0].body, /not responding/)
+  assert.equal(updates.length, 2)
+  assert.ok(updates.every((u) => /not responding/.test(u.body)))
 })
 
 test('does not open a second incident while one is already open', async () => {
@@ -100,7 +112,7 @@ test('does not open a second incident while one is already open', async () => {
   await runStatusChecks(env, fetchStub({ frescoUp: false }))
   await runStatusChecks(env, fetchStub({ frescoUp: false }))
   const incidents = env.DB.prepare('SELECT * FROM status_incidents').all().results
-  assert.equal(incidents.length, 1)
+  assert.equal(incidents.length, 2, 'fresco + the models aggregate, no duplicates from the third run')
 })
 
 test('auto-resolves after two consecutive healthy checks', async () => {
