@@ -19,7 +19,12 @@
 //                              per-instance /health route; the domain-wide
 //                              openai.vast.ai/health is NOT instance-specific
 //                              and returns 200 regardless of whether this
-//                              deployment is actually up.
+//                              deployment is actually up. NOTE: the "id"
+//                              this lists ("lumen-1-3-tuned") is vast.ai's
+//                              own deployment label, not a usable model id —
+//                              sending it as `model` in a chat/completions
+//                              request 404s ("does not exist"). See
+//                              SERVED_MODEL_NAME below for the real one.
 //
 // Unlike RunPod Serverless, vast.ai does not autoscale or scale to zero: the
 // instance behind VAST_FRESCO13_BASE_URL is either up (and billing) or down,
@@ -51,11 +56,15 @@ function errorResponse(message, status = 502) {
   })
 }
 
-// The model id this vast.ai deployment actually answers to — confirmed via
-// {base}/models returning {"id":"lumen-1-3-tuned"}. Unrelated to the
-// Hugging Face repo name (AxionLabsAI/Fresco-1.3) that RunPod used; this
-// gateway names deployments by its own convention, not the HF path.
-const SERVED_MODEL_NAME = 'lumen-1-3-tuned'
+// The model id vLLM itself actually answers to. NOT what {base}/models
+// reports ("lumen-1-3-tuned") — that string is vast.ai's own deployment
+// label and 404s as a model id ("The model `lumen-1-3-tuned` does not
+// exist"). Confirmed by sending an empty model field (vLLM falls back to
+// whatever it was actually launched with) and reading the real name back
+// from the response's own "model" field: "AxionLabsAI/Lumen-1.3-TUNED".
+// Also unrelated to the old RunPod HF repo name (AxionLabsAI/Fresco-1.3) —
+// this deployment was pushed under a different repo/tag.
+const SERVED_MODEL_NAME = 'AxionLabsAI/Lumen-1.3-TUNED'
 
 // This is the EXACT normal-mode system prompt the 2026-08 safety eval was
 // run under (see fresco_13_safety_eval_kaggle.ipynb's NORMAL_PROMPT) — the
