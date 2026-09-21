@@ -1,8 +1,14 @@
-// Fresco 1.3 runs on its own RunPod Serverless endpoint (RUNPOD_FRESCO13_ENDPOINT_ID)
-// behind vLLM, separate from Fresco 1.2.5's endpoint — same shape as
-// fresco-upstream.js, kept as its own file rather than a branch in that one
-// so the two models' endpoints, served names, and system prompts can diverge
-// independently without conditionals threaded through shared code.
+// Fresco 1.3 runs on a vast.ai GPU instance behind vLLM's OpenAI-compatible
+// server (env.VAST_FRESCO13_BASE_URL, e.g. "http://<ip>:<port>"), separate
+// from Fresco 1.2.5's RunPod endpoint — same shape as fresco-upstream.js,
+// kept as its own file rather than a branch in that one so the two models'
+// endpoints, served names, and system prompts can diverge independently
+// without conditionals threaded through shared code.
+//
+// Unlike RunPod Serverless, vast.ai does not autoscale or scale to zero: the
+// instance behind VAST_FRESCO13_BASE_URL is either up (and billing) or down,
+// full stop. There is no "warm/cold" distinction here, and probeFresco13Health
+// returning false means the box is genuinely unreachable, not just idle.
 //
 // Fresco 1.3 shipped below its internal adversarial safety target (66.7% vs
 // an 80% target — see the 2026-08 safety eval and sennoric.com/announcements)
@@ -11,8 +17,17 @@
 // model-id entry without re-running the eval or getting a real floor decision
 // recorded in Notion first.
 
-function runpodBaseUrl(env) {
-  return `https://api.runpod.ai/v2/${env.RUNPOD_FRESCO13_ENDPOINT_ID}/openai/v1`
+function vastBaseUrl(env) {
+  return env.VAST_FRESCO13_BASE_URL
+}
+
+function authHeaders(env) {
+  // vast.ai instances don't get an auth layer for free the way RunPod does —
+  // whether the vLLM server enforces a bearer token at all depends on how it
+  // was launched (--api-key or not). Only send the header when a key is
+  // configured, so an instance with no auth isn't sent a bogus token it'll
+  // reject.
+  return env.VAST_API_KEY ? { Authorization: `Bearer ${env.VAST_API_KEY}` } : {}
 }
 
 function errorResponse(message, status = 502) {
@@ -50,11 +65,11 @@ export async function proxyFresco13Request(body, env, fetchImpl = fetch) {
 
   let upstream
   try {
-    upstream = await fetchImpl(`${runpodBaseUrl(env)}/chat/completions`, {
+    upstream = await fetchImpl(`${vastBaseUrl(env)}/v1/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${env.RUNPOD_API_KEY}`,
+        ...authHeaders(env),
       },
       body: JSON.stringify(requestBody),
     })
@@ -94,8 +109,8 @@ export async function proxyFresco13Request(body, env, fetchImpl = fetch) {
 
 export async function probeFresco13Health(env, fetchImpl = fetch, timeoutMs = 6000) {
   try {
-    const response = await fetchImpl(`https://api.runpod.ai/v2/${env.RUNPOD_FRESCO13_ENDPOINT_ID}/health`, {
-      headers: { Authorization: `Bearer ${env.RUNPOD_API_KEY}` },
+    const response = await fetchImpl(`${vastBaseUrl(env)}/health`, {
+      headers: authHeaders(env),
       signal: AbortSignal.timeout(timeoutMs),
     })
     return response.ok
@@ -105,6 +120,6 @@ export async function probeFresco13Health(env, fetchImpl = fetch, timeoutMs = 60
 }
 
 export const FRESCO13_UPSTREAM_URLS = {
-  chat: (env) => `${runpodBaseUrl(env)}/chat/completions`,
-  health: (env) => `https://api.runpod.ai/v2/${env.RUNPOD_FRESCO13_ENDPOINT_ID}/health`,
+  chat: (env) => `${vastBaseUrl(env)}/v1/chat/completions`,
+  health: (env) => `${vastBaseUrl(env)}/health`,
 }
