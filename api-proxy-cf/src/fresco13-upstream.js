@@ -1,9 +1,25 @@
-// Fresco 1.3 runs on a vast.ai GPU instance behind vLLM's OpenAI-compatible
-// server (env.VAST_FRESCO13_BASE_URL, e.g. "http://<ip>:<port>"), separate
-// from Fresco 1.2.5's RunPod endpoint — same shape as fresco-upstream.js,
-// kept as its own file rather than a branch in that one so the two models'
-// endpoints, served names, and system prompts can diverge independently
-// without conditionals threaded through shared code.
+// Fresco 1.3 runs behind vast.ai's own gateway at openai.vast.ai, not a bare
+// vLLM box — env.VAST_FRESCO13_BASE_URL is the per-deployment path prefix
+// (confirmed live: "https://openai.vast.ai/lumen-1-3-tuned"), separate from
+// Fresco 1.2.5's RunPod endpoint — same shape as fresco-upstream.js, kept as
+// its own file rather than a branch in that one so the two models' endpoints,
+// served names, and system prompts can diverge independently without
+// conditionals threaded through shared code.
+//
+// This gateway's routes were confirmed by hand (curl), not assumed from
+// vLLM's usual layout — it deliberately does NOT use vLLM's normal "/v1/..."
+// prefix:
+//   {base}/chat/completions  — POST, requires Authorization: Bearer <key>
+//                              (401 with no/bad key); GET 405s (route exists,
+//                              wrong method) confirming this exact path.
+//   {base}/v1/chat/completions — 404. The /v1 prefix does not exist here.
+//   {base}/models            — GET, no auth required, 200 with
+//                              {"data":[{"id":"lumen-1-3-tuned",...}]}. Used
+//                              as the health check since there is no
+//                              per-instance /health route; the domain-wide
+//                              openai.vast.ai/health is NOT instance-specific
+//                              and returns 200 regardless of whether this
+//                              deployment is actually up.
 //
 // Unlike RunPod Serverless, vast.ai does not autoscale or scale to zero: the
 // instance behind VAST_FRESCO13_BASE_URL is either up (and billing) or down,
@@ -22,12 +38,10 @@ function vastBaseUrl(env) {
 }
 
 function authHeaders(env) {
-  // vast.ai instances don't get an auth layer for free the way RunPod does —
-  // whether the vLLM server enforces a bearer token at all depends on how it
-  // was launched (--api-key or not). Only send the header when a key is
-  // configured, so an instance with no auth isn't sent a bogus token it'll
-  // reject.
-  return env.VAST_API_KEY ? { Authorization: `Bearer ${env.VAST_API_KEY}` } : {}
+  // Confirmed required for {base}/chat/completions (401 without it) — unlike
+  // a bare self-hosted vLLM box, this gateway always expects a key, so no
+  // "auth optional" branch here.
+  return { Authorization: `Bearer ${env.VAST_API_KEY}` }
 }
 
 function errorResponse(message, status = 502) {
@@ -37,12 +51,11 @@ function errorResponse(message, status = 502) {
   })
 }
 
-// Must exactly match the repo name the Kaggle upload script pushes to and
-// the --served-model-name vLLM is actually launched with — see
-// scripts/fresco13_drive_to_hf.py and the deploy runbook. Confirmed live on
-// Hugging Face (private, 9B params) as of this session — update both
-// together, never one alone.
-const SERVED_MODEL_NAME = 'AxionLabsAI/Fresco-1.3'
+// The model id this vast.ai deployment actually answers to — confirmed via
+// {base}/models returning {"id":"lumen-1-3-tuned"}. Unrelated to the
+// Hugging Face repo name (AxionLabsAI/Fresco-1.3) that RunPod used; this
+// gateway names deployments by its own convention, not the HF path.
+const SERVED_MODEL_NAME = 'lumen-1-3-tuned'
 
 // This is the EXACT normal-mode system prompt the 2026-08 safety eval was
 // run under (see fresco_13_safety_eval_kaggle.ipynb's NORMAL_PROMPT) — the
@@ -65,7 +78,7 @@ export async function proxyFresco13Request(body, env, fetchImpl = fetch) {
 
   let upstream
   try {
-    upstream = await fetchImpl(`${vastBaseUrl(env)}/v1/chat/completions`, {
+    upstream = await fetchImpl(`${vastBaseUrl(env)}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -107,10 +120,12 @@ export async function proxyFresco13Request(body, env, fetchImpl = fetch) {
   })
 }
 
+// No per-instance /health route exists on this gateway (see file-header
+// note) — {base}/models is the closest equivalent: it 200s only for a route
+// that actually resolves to this deployment.
 export async function probeFresco13Health(env, fetchImpl = fetch, timeoutMs = 6000) {
   try {
-    const response = await fetchImpl(`${vastBaseUrl(env)}/health`, {
-      headers: authHeaders(env),
+    const response = await fetchImpl(`${vastBaseUrl(env)}/models`, {
       signal: AbortSignal.timeout(timeoutMs),
     })
     return response.ok
@@ -120,6 +135,6 @@ export async function probeFresco13Health(env, fetchImpl = fetch, timeoutMs = 60
 }
 
 export const FRESCO13_UPSTREAM_URLS = {
-  chat: (env) => `${vastBaseUrl(env)}/v1/chat/completions`,
-  health: (env) => `${vastBaseUrl(env)}/health`,
+  chat: (env) => `${vastBaseUrl(env)}/chat/completions`,
+  health: (env) => `${vastBaseUrl(env)}/models`,
 }
