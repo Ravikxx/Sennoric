@@ -2090,12 +2090,26 @@ export function classifyProviderError(err, modelAlias) {
     if (isSennoricHostedProvider(resolveProvider(modelAlias))) return { kind: 'account', message: `Invalid or revoked Sennoric credentials. Use /login or /sennoric-key <your-key> to authenticate.\n→ Sign up or get a key at sennoric.com/keys` };
     return { kind: 'account', message: `Invalid API key for "${modelAlias}". Use /api ${modelAlias} <your-key> to set it.` };
   }
+  // The Worker answers 402 insufficient_credits_error when an sennoric-sk- API
+  // key has no credit balance: key traffic is billed from credits only and
+  // never draws on the plan's included allowance.
+  if (status === 402 || errObj.type === 'insufficient_credits_error') {
+    return { kind: 'quota', message: `No Sennoric credits remaining. Requests made with a Sennoric API key are billed from credits only.\n→ Check your balance with /usage, or top up with /credits buy <amount>.` };
+  }
   if (status === 429 || /rate.?limit|quota/i.test(msg)) {
+    // Allowances are shown as limits with a reset time, never as a dollar
+    // figure — the Worker meters in microdollars internally, but that amount
+    // is deliberately not surfaced to users (see percentUsed in the Worker).
     const resetStr = errObj.reset_at ? ` Resets ${formatResetTime(errObj.reset_at)}.` : '';
-    const limitStr = Number.isFinite(Number(errObj.limit_usd)) ? ` ($${Number(errObj.limit_usd).toFixed(2)} included usage)` : '';
-    if (errObj.window)    return { kind: 'quota', message: `Sennoric two-hour allowance reached${limitStr} and no API credits remain.${resetStr}` };
-    if (/weekly/i.test(msg)) return { kind: 'quota', message: `Sennoric weekly allowance reached${limitStr} and no API credits remain.${resetStr}` };
+    const more = '\n→ /usage shows your limits; /upgrade for more included usage, or /credits buy <amount>.';
+    if (errObj.window)    return { kind: 'quota', message: `Sennoric rolling-window usage limit reached and no credits remain.${resetStr}${more}` };
+    if (/weekly/i.test(msg)) return { kind: 'quota', message: `Sennoric weekly usage limit reached and no credits remain.${resetStr}${more}` };
     return { kind: 'quota', message: `Rate limited by "${modelAlias}".${resetStr || ' Wait a moment and try again.'}` };
+  }
+  // A kill-switched hosted model: the Worker's message for these is written
+  // to be user-facing (it never carries internal detail), so show it as-is.
+  if (status === 503 && /^model_(unavailable|disabled)$/.test(errObj.type || '')) {
+    return { kind: 'availability', message: `${errObj.message || `"${modelAlias}" is temporarily unavailable.`}\n→ Try /model fresco-latest, or /models to see what's available.` };
   }
   if (status === 404 || /model.*not.*found|no.*model/i.test(msg)) {
     return { kind: 'availability', message: `Model not found: "${modelAlias}". Try /model <name> to switch.` };

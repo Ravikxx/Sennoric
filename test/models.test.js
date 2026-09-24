@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { MODELS, MODEL_PROVIDERS, CONTEXT_WINDOWS, CUSTOM_ENDPOINTS } from '../src/config.js';
+import { MODELS, MODEL_PROVIDERS, CONTEXT_WINDOWS, CUSTOM_ENDPOINTS, TOKEN_COSTS, SENNORIC_CATALOG, fetchSennoricModels, isSennoricModelUnavailable, modelLabel } from '../src/config.js';
 import { createClient, resolveModel, resolveProvider, setSennoricAuthResolver } from '../src/agent/models.js';
 
 // ── Model list ─────────────────────────────────────────────────────────────────
@@ -12,9 +12,64 @@ test('MODELS has entries', () => {
 test('MODELS only exposes Sennoric-hosted chat models', () => {
   assert.ok(MODELS['fresco']);
   assert.ok(MODELS['glyph']);
-  // No third-party provider models remain
+  // Every id the Worker's /v1/models serves, and nothing else — no
+  // third-party provider models remain.
+  const served = ['fresco', 'fresco-1.3', 'fresco-latest', 'glyph', 'glyph-latest'];
   for (const alias of Object.keys(MODELS)) {
-    assert.ok(['fresco', 'glyph'].includes(alias), `unexpected model: ${alias}`);
+    assert.ok(served.includes(alias), `unexpected model: ${alias}`);
+    assert.equal(resolveProvider(alias), 'sennoric', `${alias} must route to the Sennoric Worker`);
+  }
+  for (const id of served) assert.ok(MODELS[id], `missing served model: ${id}`);
+});
+
+test('Fresco/Glyph versions the Worker adds later still route to Sennoric', () => {
+  assert.equal(resolveProvider('fresco-1.4'), 'sennoric');
+  assert.equal(resolveProvider('glyph-2.0'), 'sennoric');
+  assert.equal(resolveProvider('Fresco-Latest'), 'sennoric');
+  // ...but only as a whole family name, not any id that merely starts with it.
+  assert.notEqual(resolveProvider('frescoish'), 'sennoric');
+});
+
+test('token cost estimates mirror the Worker metering rates', () => {
+  // api-proxy-cf/src/index.js MODEL_RATES_PER_M_USD
+  assert.deepEqual(TOKEN_COSTS['fresco'], { in: 0.10, out: 0.35 });
+  assert.deepEqual(TOKEN_COSTS['fresco-1.3'], { in: 0.15, out: 0.50 });
+  assert.deepEqual(TOKEN_COSTS['glyph'], { in: 0.05, out: 0.20 });
+});
+
+test('model labels name the served version, and unknown ids fall back to the raw id', () => {
+  assert.equal(modelLabel('fresco'), 'Fresco 1.2.5');
+  assert.equal(modelLabel('fresco-1.3'), 'Fresco 1.3');
+  assert.equal(modelLabel('my-endpoint'), 'my-endpoint');
+});
+
+test('fetchSennoricModels marks a model the live catalog omits as unavailable', async () => {
+  const fakeFetch = async (url) => {
+    assert.equal(url, 'https://api.sennoric.com/v1/models');
+    return { ok: true, json: async () => ({ data: [{ id: 'fresco' }, { id: 'glyph' }, { id: 'fresco-latest' }] }) };
+  };
+  const before = { ...SENNORIC_CATALOG };
+  try {
+    await fetchSennoricModels(fakeFetch);
+    assert.equal(SENNORIC_CATALOG.live, true);
+    assert.equal(isSennoricModelUnavailable('fresco'), false);
+    assert.equal(isSennoricModelUnavailable('fresco-1.3'), true);
+    // Custom endpoints are never judged against the Sennoric catalog.
+    assert.equal(isSennoricModelUnavailable('ollama-local'), false);
+  } finally {
+    Object.assign(SENNORIC_CATALOG, before);
+  }
+});
+
+test('an unreachable catalog never marks models unavailable', async () => {
+  const before = { ...SENNORIC_CATALOG };
+  SENNORIC_CATALOG.live = false; SENNORIC_CATALOG.ids = [];
+  try {
+    await fetchSennoricModels(async () => { throw new Error('offline'); });
+    assert.equal(SENNORIC_CATALOG.live, false);
+    assert.equal(isSennoricModelUnavailable('fresco-1.3'), false);
+  } finally {
+    Object.assign(SENNORIC_CATALOG, before);
   }
 });
 

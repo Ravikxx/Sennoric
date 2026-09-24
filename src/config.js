@@ -10,25 +10,53 @@ if (isTrustedDirectory() && existsSync(cwdEnv)) config({ path: cwdEnv });
 else if (existsSync(homeEnv)) config({ path: homeEnv });
 else config();
 
+// Sennoric-hosted chat models, keyed by the exact ids the Worker's
+// GET /v1/models serves (api-proxy-cf/src/index.js is the source of truth).
+// Bare 'fresco' is Fresco 1.2.5 — the Worker has no separate 'fresco-1.2.5'
+// id. The '-latest' ids are Worker-side aliases: each resolves to the newest
+// version in its family that isn't currently kill-switched, so they keep
+// working when a specific version is pulled.
 export const MODELS = {
-  fresco: 'fresco',
-  glyph:  'glyph',
+  fresco:          'fresco',
+  'fresco-1.3':    'fresco-1.3',
+  'fresco-latest': 'fresco-latest',
+  glyph:           'glyph',
+  'glyph-latest':  'glyph-latest',
 };
 
 export const MODEL_PROVIDERS = {
-  fresco: 'sennoric',
-  glyph:  'sennoric',
+  fresco:          'sennoric',
+  'fresco-1.3':    'sennoric',
+  'fresco-latest': 'sennoric',
+  glyph:           'sennoric',
+  'glyph-latest':  'sennoric',
 };
+
+// Human-facing names for the ids above — what /model and /models show next
+// to the raw id. Ids the Worker adds later without a catalog entry here fall
+// back to the raw id (see modelLabel).
+export const MODEL_CATALOG = {
+  fresco:          { label: 'Fresco 1.2.5', description: 'Flagship model for general chat, writing, and code.' },
+  'fresco-1.3':    { label: 'Fresco 1.3',   description: 'Newest Fresco release.' },
+  'fresco-latest': { label: 'Fresco (latest)', description: 'Always the newest Fresco version that is currently available.' },
+  glyph:           { label: 'Glyph 1.1',    description: 'Small, fast model for quick, lightweight conversations.' },
+  'glyph-latest':  { label: 'Glyph (latest)', description: 'Always the newest Glyph version that is currently available.' },
+};
+
+export function modelLabel(alias) {
+  return MODEL_CATALOG[alias]?.label || alias;
+}
 
 export const API_KEYS = {
   tavily:      process.env.TAVILY_API_KEY,
   sketchfab:   process.env.SKETCHFAB_API_KEY,
 };
 
-export const BASE_URLS = {
-  fresco:         'https://api.sennoric.com/v1',
-  glyph:          'https://api.sennoric.com/v1',
-};
+export const SENNORIC_API_BASE = 'https://api.sennoric.com';
+
+export const BASE_URLS = Object.fromEntries(
+  Object.keys(MODELS).map((alias) => [alias, `${SENNORIC_API_BASE}/v1`]),
+);
 
 // Named custom endpoints — mutated at runtime via /endpoint command.
 // Each key is the endpoint name used as a model alias.
@@ -87,9 +115,15 @@ export function setApiKey(modelOrProvider, key) {
 // Context window sizes (input tokens) per model ID. Sennoric-hosted models
 // are served by the Worker, which doesn't expose a fixed context window here;
 // callers fall back to the default below when no entry matches.
+// fresco-1.3 and the -latest aliases have no published window of their own;
+// they use their family's figure (a guess for fresco-1.3 — adjust here if the
+// served max_model_len turns out smaller).
 export const CONTEXT_WINDOWS = {
   'fresco':        128_000,
+  'fresco-1.3':    128_000,
+  'fresco-latest': 128_000,
   'glyph':          32_000,
+  'glyph-latest':   32_000,
 };
 
 export function getContextWindow(modelAlias) {
@@ -106,14 +140,48 @@ export const PROVIDER_MODELS = {};
 // see and try known models even without configuring every key). Only Sennoric
 // models are exposed now.
 const FALLBACK_MODELS = {
-  sennoric: [{ id: 'fresco', context_length: 128_000 }, { id: 'glyph', context_length: 32_000 }],
+  sennoric: Object.keys(MODELS).map((id) => ({ id, context_length: CONTEXT_WINDOWS[id] || 128_000 })),
 };
 
-// Sennoric models are served by the Worker at api.sennoric.com — no external
-// provider model discovery is needed, so this list is empty by design.
+// Third-party provider discovery was removed with the non-Sennoric providers,
+// so this list is empty by design; Sennoric's own catalog is fetched by
+// fetchSennoricModels() below instead.
 const PROVIDER_MODEL_ENDPOINTS = [];
 
+// Live view of the Worker's public GET /v1/models — the same catalog Sennoric
+// Desktop's model picker reads. `live` stays false until a fetch succeeds, so
+// callers can tell "the server hid this model" (kill-switched) apart from
+// "we never reached the server".
+export const SENNORIC_CATALOG = { live: false, ids: [] };
+
+export async function fetchSennoricModels(fetchImpl = globalThis.fetch) {
+  try {
+    const res = await fetchImpl(`${SENNORIC_API_BASE}/v1/models`, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    const ids = (Array.isArray(json?.data) ? json.data : [])
+      .map((m) => (typeof m?.id === 'string' ? m.id : null))
+      .filter(Boolean);
+    if (!ids.length) throw new Error('empty catalog');
+    SENNORIC_CATALOG.live = true;
+    SENNORIC_CATALOG.ids = ids;
+    PROVIDER_MODELS.sennoric = ids.map((id) => ({ id, context_length: CONTEXT_WINDOWS[id] || 0 }));
+  } catch {
+    if (!PROVIDER_MODELS.sennoric) PROVIDER_MODELS.sennoric = FALLBACK_MODELS.sennoric;
+  }
+  return SENNORIC_CATALOG;
+}
+
+// True only when a live catalog was fetched and it omits this id — i.e. the
+// Worker has kill-switched it. Unknown (never fetched) reads as available.
+export function isSennoricModelUnavailable(alias) {
+  if (!SENNORIC_CATALOG.live) return false;
+  if (MODEL_PROVIDERS[alias] !== 'sennoric' && !/^(fresco|glyph)(-|$)/i.test(alias)) return false;
+  return !SENNORIC_CATALOG.ids.includes(alias);
+}
+
 export async function fetchProviderModels() {
+  await fetchSennoricModels();
   await Promise.allSettled(
     PROVIDER_MODEL_ENDPOINTS.map(async ({ provider, baseURL, needsKey, format }) => {
       const hasKey = !needsKey || API_KEYS[needsKey];
@@ -211,10 +279,15 @@ export function getProviderFallbackChain() {
 }
 
 // Cost per 1M tokens (input, output) in USD — used for rough estimates only.
-// Fresco/Glyph are served by the Sennoric Worker; these are the public rates.
+// Mirrors MODEL_RATES_PER_M_USD in api-proxy-cf/src/index.js, the rates the
+// Worker actually meters with. The -latest aliases are estimated at their
+// newest version's rate, which is what they resolve to while it's available.
 export const TOKEN_COSTS = {
-  'fresco': { in: 0.15, out: 0.50 },
-  'glyph':  { in: 0.05, out: 0.15 },
+  'fresco':        { in: 0.10, out: 0.35 },
+  'fresco-1.3':    { in: 0.15, out: 0.50 },
+  'fresco-latest': { in: 0.15, out: 0.50 },
+  'glyph':         { in: 0.05, out: 0.20 },
+  'glyph-latest':  { in: 0.05, out: 0.20 },
 };
 
 // ── Per-model reasoning/thinking metadata and transport shim config ──────
@@ -232,10 +305,9 @@ export const TOKEN_COSTS = {
 //   'none'              → no thinking field
 // `maxTokensField` is 'max_tokens' or 'max_completion_tokens' (o-series use the latter).
 // `stripFields` lists body fields this model/provider cannot accept.
-export const REASONING_CONFIGS = {
-  'fresco': { mode: 'none', efforts: [], wireFormat: 'none', maxTokensField: 'max_tokens' },
-  'glyph':  { mode: 'none', efforts: [], wireFormat: 'none', maxTokensField: 'max_tokens' },
-};
+export const REASONING_CONFIGS = Object.fromEntries(
+  Object.keys(MODELS).map((id) => [id, { mode: 'none', efforts: [], wireFormat: 'none', maxTokensField: 'max_tokens' }]),
+);
 
 // Provider-level body-field strip lists applied to all models under that provider.
 export const PROVIDER_STRIP_FIELDS = {};

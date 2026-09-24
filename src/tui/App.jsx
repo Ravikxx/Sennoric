@@ -9,7 +9,7 @@ import {
   listChats, loadChat, deleteChat, saveChat, exportChat,
   exportSession, importSession,
   listProfiles, saveProfile, loadProfile, deleteProfile,
-  saveApiKey, saveCustomEndpoints, getSennoricKey, saveSennoricKey, getSavedApiKeys,
+  saveApiKey, saveCustomEndpoints, getSennoricKey, saveSennoricKey, getSennoricSession, saveSennoricSession, getSavedApiKeys,
   saveAdviserModel, saveVisionModel, saveVideoModel, saveAudioModel, saveImageModel,
   getSkills, saveSkill, deleteSkill,
   undoLastBackup, listCheckpoints, rewindCheckpoints,
@@ -138,9 +138,9 @@ let onboardingDone = false;
 // First-run welcome: one smart text question (key type is detected on submit).
 const ONBOARDING_FORM = {
   questions: [{
-    question: 'Welcome to Sennoric 👋  Fresco requires a free Sennoric account. Paste a Sennoric API key, or an Anthropic/OpenAI key for those providers. Leave blank to sign in later with /login.',
+    question: 'Welcome to Sennoric 👋  Fresco and Glyph need a free Sennoric account. Type "login" to sign in with your browser, or paste a Sennoric API key (sennoric-sk-…). Press Enter to skip.',
     type: 'text',
-    placeholder: 'paste an API key, or press Enter to skip',
+    placeholder: 'login, a sennoric-sk- key, or Enter to skip',
   }],
 };
 
@@ -1404,7 +1404,8 @@ function Session({
           ['Files & context',   ['include', 'add', 'run', 'search', 'history', 'undo', 'rewind']],
           ['Chats',             ['save', 'resume', 'sessions', 'remove-chat', 'search-chats', 'export', 'export-session', 'import-session', 'copy', 'copy-block']],
           ['Git',               ['git', 'pr', 'review']],
-          ['Keys & endpoints',  ['api', 'sennoric-key', 'login', 'endpoint']],
+          ['Account',           ['login', 'logout', 'usage', 'account', 'credits', 'upgrade', 'billing']],
+          ['Keys & endpoints',  ['api', 'sennoric-key', 'endpoint']],
           ['Agent behavior',    ['thinking', 'system', 'adviser', 'goal', 'retry', 'btw', 'compare', 'compare-models', 'remember', 'forget', 'todo', 'skills', 'skill-generator', 'skill-delete', 'profile', 'permissions', 'watch']],
           ['Computer & media',  ['computer', 'cu', 'vision', 'ss', 'macro', 'speak', 'img-gen', 'img-gen-model']],
            ['Integrations',      ['discord', 'oauth', 'schedule', 'resolve', 'reaper', 'unity', 'unreal', 'blender', 'mcp', 'contribute']],
@@ -1453,18 +1454,21 @@ function Session({
         return;
       }
       case 'models': {
-        const { CUSTOM_ENDPOINTS, PROVIDER_MODELS } = await import('../config.js');
+        const { CUSTOM_ENDPOINTS, PROVIDER_MODELS, MODEL_CATALOG, isSennoricModelUnavailable } = await import('../config.js');
         const fmtCtx = (v) => v ? (v >= 1_000_000 ? (v / 1_000_000).toFixed(1) + 'M' : (v / 1000).toFixed(0) + 'k') : '?';
         const resolved = new Set();
         const shortNames = new Set();
         const entries = [];
         for (const [alias, id] of Object.entries(MODELS)) {
           resolved.add(id);
+          const unavailable = isSennoricModelUnavailable(alias);
           entries.push({
-            name: alias.replace(/-/g, ' '),
+            // Raw id, not a prettified name — it's what /model <name> takes.
+            name: alias,
             ctx: getContextWindow(alias),
             isCurrent: alias === model || id === model,
             provider: null,
+            note: `${MODEL_CATALOG[alias]?.label || ''}${unavailable ? ' — temporarily unavailable' : ''}`,
           });
         }
         const skipModel = /tts|embed|aqa|robotics|clip|whisper|imagen|veo|lyria|guard|moderation|ocr|omni|realtime|computer-use|customtools|native-audio|deep-research|antigravity/i;
@@ -1491,10 +1495,11 @@ function Session({
         entries.sort((a, b) => a.name.localeCompare(b.name));
         const maxName = Math.min(32, Math.max(...entries.map(e => e.name.length)));
         const lines = ['Models:'];
-        for (const { name, ctx, isCurrent, provider } of entries) {
+        for (const { name, ctx, isCurrent, provider, note } of entries) {
           const padded = name.length <= maxName ? name.padEnd(maxName) : name.slice(0, maxName - 1) + '…';
           const prov = provider ? ` \x1b[90m(${provider})\x1b[0m` : '';
-          lines.push(`${isCurrent ? '▸' : ' '} ${padded}  ${fmtCtx(ctx).padStart(5)}${prov}`);
+          const desc = note ? `  \x1b[90m${note}\x1b[0m` : '';
+          lines.push(`${isCurrent ? '▸' : ' '} ${padded}  ${fmtCtx(ctx).padStart(5)}${prov}${desc}`);
         }
         const eps = Object.entries(CUSTOM_ENDPOINTS);
         if (eps.length) {
@@ -1512,15 +1517,19 @@ function Session({
       case 'model': {
         if (!arg) {
           const ctx = getContextWindow(model);
-          push({ type: 'info', text: `current model: ${model}  ·  context: ${ctx >= 1_000_000 ? (ctx / 1_000_000).toFixed(1) + 'M' : (ctx / 1000).toFixed(0) + 'k'} tokens` });
+          const { modelLabel } = await import('../config.js');
+          const label = modelLabel(model);
+          push({ type: 'info', text: `current model: ${model}${label !== model ? ` (${label})` : ''}  ·  context: ${ctx >= 1_000_000 ? (ctx / 1_000_000).toFixed(1) + 'M' : (ctx / 1000).toFixed(0) + 'k'} tokens` });
           return;
         }
-        const { CUSTOM_ENDPOINTS, PROVIDER_MODELS } = await import('../config.js');
+        const { CUSTOM_ENDPOINTS, PROVIDER_MODELS, modelLabel, isSennoricModelUnavailable } = await import('../config.js');
         const inDynamic = Object.values(PROVIDER_MODELS).some(list => list.some(m => m.id === arg));
         if (!MODELS[arg] && !CUSTOM_ENDPOINTS[arg] && !inDynamic && !arg.includes('/')) { push({ type: 'error', text: `Unknown model "${arg}". /models to list.` }); return; }
         setModel(arg); agentRef.current?.setModel(arg); try { saveModel(arg); } catch {}
         const ctx = getContextWindow(arg);
-        push({ type: 'info', text: `model → ${arg}  ·  context: ${ctx >= 1_000_000 ? (ctx / 1_000_000).toFixed(1) + 'M' : (ctx / 1000).toFixed(0) + 'k'} tokens` });
+        const label = modelLabel(arg);
+        const warn = isSennoricModelUnavailable(arg) ? '\n⚠ Sennoric reports this model as temporarily unavailable — requests may fail until it is back.' : '';
+        push({ type: 'info', text: `model → ${arg}${label !== arg ? ` (${label})` : ''}  ·  context: ${ctx >= 1_000_000 ? (ctx / 1_000_000).toFixed(1) + 'M' : (ctx / 1000).toFixed(0) + 'k'} tokens${warn}` });
         return;
       }
       case 'mode': {
@@ -2185,6 +2194,7 @@ function Session({
           }).then(async r => {
             if (r.status === 200) push({ type: 'info', text: 'Key is valid. Fresco is reachable.' });
             else if (r.status === 401) push({ type: 'error', text: 'Key rejected by server (401). Generate a fresh key at sennoric.com/keys' });
+            else if (r.status === 402) push({ type: 'info', text: 'Key is valid, but it has no credits — API-key requests are billed from credits only. /credits buy <amount> to top up.' });
             else if (r.status === 429) push({ type: 'info', text: 'Key is valid but rate-limited.' });
             else push({ type: 'error', text: `Unexpected response: HTTP ${r.status}` });
           }).catch(e => push({ type: 'error', text: `Network error: ${e.message}` }));
@@ -2461,24 +2471,31 @@ function Session({
           const deviceCode = String(device_code);
           if (!/^[A-Za-z0-9_-]+$/.test(deviceCode)) { push({ type: 'error', text: 'Invalid device code from server.' }); return; }
           const loginUrl = `https://sennoric.com/keys#device=${deviceCode}`;
-          try { if (process.platform === 'win32') spawn('cmd', ['/c', 'start', '', loginUrl], { detached: true, stdio: 'ignore' }).unref(); else if (process.platform === 'darwin') spawn('open', [loginUrl], { detached: true, stdio: 'ignore' }).unref(); else spawn('xdg-open', [loginUrl], { detached: true, stdio: 'ignore' }).unref(); }
-          catch { push({ type: 'info', text: `Open this URL in your browser:\n${loginUrl}` }); }
+          const { openUrl } = await import('../utils/openUrl.js');
+          if (!openUrl(loginUrl)) push({ type: 'info', text: `Open this URL in your browser:\n${loginUrl}` });
           push({ type: 'info', text: `Waiting for authorization… (expires in ${Math.floor(expires_in / 60)} min)` });
           const deadline = Date.now() + expires_in * 1000;
           const poll = async () => {
             if (Date.now() > deadline) { push({ type: 'error', text: 'Login timed out.' }); return; }
             try {
-              const pollRes = await fetch(`${SENNORIC_API}/auth/device/poll?code=${device_code}`);
+              const pollRes = await fetch(`${SENNORIC_API}/auth/device/poll?code=${deviceCode}`);
               const data = await pollRes.json();
               if (data.pending) { setTimeout(poll, 2500); return; }
               if (data.token) {
-                const keyRes = await fetch(`${SENNORIC_API}/account/keys`, {
-                  method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.token}` },
-                  body: JSON.stringify({ label: `sennoric-cli (${new Date().toLocaleDateString()})` }),
-                });
-                const keyData = await keyRes.json();
-                if (keyData.key_value) { saveSennoricKey(keyData.key_value); push({ type: 'info', text: `Logged in as ${data.email}\nAPI key created and saved.` }); }
-                else { push({ type: 'error', text: 'Authorized but could not create API key. Try /sennoric-key <key> manually.' }); }
+                // Keep the session token too: /usage, /upgrade, /billing and
+                // /credits call account routes that reject API keys.
+                saveSennoricSession({ token: data.token, email: data.email || null, savedAt: Date.now() });
+                const { listApiKeys, createApiKey, savedKeyIsActive } = await import('../services/account/accountClient.js');
+                // Re-running /login used to mint a new key every time, which
+                // exhausts a free account's 3-key cap. Reuse a still-active one.
+                const { keys } = await listApiKeys(data.token);
+                if (savedKeyIsActive(getSennoricKey(), keys)) {
+                  push({ type: 'info', text: `Logged in as ${data.email}\nUsing your existing Sennoric API key.  /usage shows your plan and limits.` });
+                  return;
+                }
+                const { key, error } = await createApiKey(data.token, `sennoric-cli (${new Date().toLocaleDateString()})`);
+                if (key) { saveSennoricKey(key); push({ type: 'info', text: `Logged in as ${data.email}\nAPI key created and saved.  /usage shows your plan and limits.` }); }
+                else { push({ type: 'error', text: `Signed in as ${data.email}, but could not create an API key: ${error}\nRevoke an unused key at sennoric.com/keys, or set one with /sennoric-key <key>.` }); }
                 return;
               }
               if (data.error) { push({ type: 'error', text: `Login failed: ${data.error}` }); return; }
@@ -2487,6 +2504,75 @@ function Session({
           };
           setTimeout(poll, 2500);
         } catch (e) { push({ type: 'error', text: `Login failed: ${e.message}` }); }
+        return;
+      }
+      case 'logout': {
+        const session = getSennoricSession();
+        const hadKey = !!getSennoricKey();
+        if (!session && !hadKey) { push({ type: 'info', text: 'Not signed in.' }); return; }
+        saveSennoricSession(null);
+        saveSennoricKey(null);
+        push({ type: 'info', text:
+          `Signed out${session?.email ? ` of ${session.email}` : ''}. The saved session and API key were removed from this machine.` +
+          (hadKey ? '\nThe API key itself still exists on your account — revoke it at sennoric.com/keys if you no longer need it.' : '') });
+        return;
+      }
+      case 'usage':
+      case 'account': {
+        const session = getSennoricSession();
+        if (!session) { push({ type: 'info', text: 'Not signed in to a Sennoric account. Use /login to see your plan, credits and usage limits.' }); return; }
+        const { fetchAccountUsage, formatAccountUsage } = await import('../services/account/accountClient.js');
+        const { usage, error, expired } = await fetchAccountUsage(session.token);
+        if (expired) saveSennoricSession(null);
+        if (!usage) { push({ type: 'error', text: error }); return; }
+        push({ type: 'info', text: formatAccountUsage(usage, { email: session.email }) });
+        return;
+      }
+      case 'upgrade':
+      case 'billing': {
+        const session = getSennoricSession();
+        if (!session) { push({ type: 'info', text: 'Not signed in to a Sennoric account. Use /login first.' }); return; }
+        const { startUpgrade, startBillingPortal } = await import('../services/account/accountClient.js');
+        const result = c === 'upgrade' ? await startUpgrade(session.token) : await startBillingPortal(session.token);
+        if (result.expired) saveSennoricSession(null);
+        if (!result.ok || !result.url) {
+          const fallback = c === 'billing' ? '\nYou can also manage billing at https://sennoric.com/settings.html' : '';
+          push({ type: 'error', text: `${result.error || 'Could not open that page.'}${fallback}` });
+          return;
+        }
+        const { openUrl } = await import('../utils/openUrl.js');
+        openUrl(result.url);
+        push({ type: 'info', text: `${c === 'upgrade' ? 'Opening Sennoric Pro checkout' : 'Opening subscription management'} in your browser…\nIf it doesn't open: ${result.url}` });
+        return;
+      }
+      case 'credits': {
+        const session = getSennoricSession();
+        if (!session) { push({ type: 'info', text: 'Not signed in to a Sennoric account. Use /login first.' }); return; }
+        const account = await import('../services/account/accountClient.js');
+        const [sub, value] = args;
+        if (!sub) {
+          const { usage, error, expired } = await account.fetchAccountUsage(session.token);
+          if (expired) saveSennoricSession(null);
+          if (!usage) { push({ type: 'error', text: error }); return; }
+          push({ type: 'info', text: `Credit balance: $${usage.creditBalanceUsd.toFixed(2)}\n  /credits buy <${account.CREDIT_TOPUP_MIN_USD}-${account.CREDIT_TOPUP_MAX_USD}>  top up via checkout\n  /credits redeem <code>  redeem a credit code` });
+          return;
+        }
+        if (sub === 'buy') {
+          const result = await account.startCreditTopUp(session.token, value);
+          if (result.expired) saveSennoricSession(null);
+          if (!result.ok || !result.url) { push({ type: 'error', text: result.error || 'Could not start checkout.' }); return; }
+          const { openUrl } = await import('../utils/openUrl.js');
+          openUrl(result.url);
+          push({ type: 'info', text: `Opening checkout for $${Number(value).toFixed(2)} of credits in your browser…\nIf it doesn't open: ${result.url}` });
+          return;
+        }
+        if (sub === 'redeem') {
+          const result = await account.redeemCreditCode(session.token, value);
+          if (!result.ok) { push({ type: 'error', text: result.error }); return; }
+          push({ type: 'info', text: `Redeemed $${result.grantedUsd.toFixed(2)} of credits. Balance: $${result.balanceUsd.toFixed(2)}` });
+          return;
+        }
+        push({ type: 'error', text: 'usage: /credits [buy <amount> | redeem <code>]' });
         return;
       }
       case 'ss': {
@@ -3093,18 +3179,17 @@ function Session({
   // Save whatever key the user pasted during onboarding (type detected by prefix).
   const finishOnboarding = useCallback((key) => {
     const k = (key || '').trim();
-    if (!k) { push({ type: 'info', text: 'No key saved. Use /login for a free Sennoric account before using Fresco, or add another provider with /api.' }); return; }
-    if (k.startsWith('sk-ant-')) {
-      saveApiKey('anthropic', k); API_KEYS.anthropic = k;
-      setModel('claude'); agentRef.current?.setModel('claude'); try { saveModel('claude'); } catch {}
-      push({ type: 'info', text: '● Anthropic key saved — switched to Claude.' });
-    } else if (k.startsWith('sk-')) {
-      saveApiKey('openai', k); API_KEYS.openai = k;
-      push({ type: 'info', text: '● OpenAI key saved. Use /model to pick a GPT model.' });
-    } else {
+    if (!k) { push({ type: 'info', text: 'Skipped. Use /login any time for a free Sennoric account, or /endpoint to add your own OpenAI-compatible server.' }); return; }
+    if (/^\/?login$/i.test(k)) { setTimeout(() => submitRef.current?.('/login'), 0); return; }
+    // Only Sennoric keys are accepted here: the Anthropic/OpenAI providers this
+    // used to detect were removed, and saving one switched to a model alias
+    // that no longer exists.
+    if (k.startsWith('sennoric-sk-')) {
       saveSennoricKey(k);
       push({ type: 'info', text: '● Sennoric key saved.' });
+      return;
     }
+    push({ type: 'error', text: "That doesn't look like a Sennoric API key (they start with sennoric-sk-). Use /login to sign in, or /endpoint to add your own OpenAI-compatible server." });
   }, [push]);
 
   const completeQuestion = useCallback((answers) => {

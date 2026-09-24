@@ -41,8 +41,8 @@ function makeEnv() {
   return { DB: { prepare: (sql) => new Statement(database, sql) }, TOKEN_SECRET: SECRET }
 }
 
-async function bearer() {
-  const payload = btoa(JSON.stringify({ uid: 'u1', v: 0, exp: Date.now() + 60_000 }))
+async function bearer(extra = {}) {
+  const payload = btoa(JSON.stringify({ uid: 'u1', v: 0, exp: Date.now() + 60_000, ...extra }))
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(SECRET), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
   const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload))
   return `${payload}.${btoa(String.fromCharCode(...new Uint8Array(signature)))}`
@@ -65,6 +65,16 @@ test('/account/keys, /account/keys/stats, and /account/keys/daily are reachable 
   const daily = await app.request('/account/keys/daily', { headers }, env)
   assert.equal(daily.status, 200)
   assert.equal((await daily.json()).daily.length, 14)
+})
+
+test('a signed OAuth link state carrying a uid is not accepted as a session token', async () => {
+  const env = makeEnv()
+  for (const action of ['link', 'web_connection', 'desktop_integration', 'domain_migration']) {
+    const res = await app.request('/account/keys', { headers: { Authorization: `Bearer ${await bearer({ action })}` } }, env)
+    assert.equal(res.status, 401, action)
+  }
+  const ok = await app.request('/account/keys', { headers: { Authorization: `Bearer ${await bearer()}` } }, env)
+  assert.equal(ok.status, 200)
 })
 
 test('creating and revoking a key works through /account/keys/:id', async () => {

@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { MODELS, MODEL_PROVIDERS, API_KEYS, BASE_URLS, CUSTOM_ENDPOINTS, REASONING_CONFIGS, PROVIDER_STRIP_FIELDS } from '../config.js';
+import { MODELS, MODEL_PROVIDERS, API_KEYS, BASE_URLS, SENNORIC_API_BASE, CUSTOM_ENDPOINTS, REASONING_CONFIGS, PROVIDER_STRIP_FIELDS } from '../config.js';
 import { getSennoricKey } from '../persist.js';
 import { ProviderError } from '../utils/namedError.js';
 
@@ -105,6 +105,10 @@ export function resolveProvider(alias) {
   if (MODEL_PROVIDERS[lower]) return MODEL_PROVIDERS[lower];
   // Named custom endpoint
   if (CUSTOM_ENDPOINTS[normalized]) return 'custom';
+  // Any Fresco/Glyph id the Worker serves (including versions added to its
+  // /v1/models catalog after this release) is Sennoric-hosted — never let a
+  // new version fall through to the 'openai' default below.
+  if (/^(fresco|glyph)(-|$)/i.test(normalized))                                return 'sennoric';
 
   if (/^claude/i.test(normalized))                                              return 'anthropic';
   if (/^(gpt|o1|o3|o4|chatgpt|text-|dall-e)/i.test(normalized))               return 'openai';
@@ -133,7 +137,7 @@ export function createClient(modelAlias) {
         message: 'Sennoric-hosted models require a Sennoric account and API key — use /login, or set a key with /sennoric-key <your-key>.',
       });
     }
-    const baseURL = BASE_URLS[modelAlias] || 'https://api.sennoric.com/v1';
+    const baseURL = BASE_URLS[modelAlias] || `${SENNORIC_API_BASE}/v1`;
     return { type: 'openai', client: new OpenAI({ apiKey: sennoricKey, baseURL }) };
   }
 
