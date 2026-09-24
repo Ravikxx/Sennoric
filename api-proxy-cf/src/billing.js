@@ -275,13 +275,27 @@ export async function chargeAccountUsage(db, userId, cost, weeklyBudget, windowB
   const included = Math.min(amount, Math.max(0, weeklyBudget - week.cost), Math.max(0, windowBudget - win.cost))
   const newWeekCost = week.cost + included
   const newWindowCost = win.cost + included
-  const newCreditBalance = (row.credit_balance || 0) - (amount - included)
   const newWeekStart = week.active ? row.usage_week : new Date(nowMs).toISOString()
   const newWindowStart = win.active ? row.usage_window : new Date(nowMs).toISOString()
-  await db.prepare(
-    `UPDATE users SET usage_week=?, included_week_cost=?, usage_window=?, included_window_cost=?, credit_balance=?
-     WHERE id=?`
-  ).bind(newWeekStart, newWeekCost, newWindowStart, newWindowCost, newCreditBalance, userId).run()
+  // Apply the charge relative to the row's current values rather than writing
+  // back what was read above: concurrent requests (or a top-up landing in
+  // between) would otherwise overwrite each other's balance changes. A period
+  // that is still the one read above accumulates; a fresh one starts over.
+  const updated = await db.prepare(
+    `UPDATE users SET
+       included_week_cost = CASE WHEN usage_week=? THEN included_week_cost+? ELSE ? END,
+       included_window_cost = CASE WHEN usage_window=? THEN included_window_cost+? ELSE ? END,
+       usage_week=?, usage_window=?,
+       credit_balance = COALESCE(credit_balance,0) - ?
+     WHERE id=?
+     RETURNING credit_balance`
+  ).bind(
+    newWeekStart, included, newWeekCost,
+    newWindowStart, included, newWindowCost,
+    newWeekStart, newWindowStart,
+    amount - included, userId,
+  ).first()
+  const newCreditBalance = updated ? updated.credit_balance : (row.credit_balance || 0) - (amount - included)
   return {
     credit_balance: newCreditBalance,
     included_week_cost: newWeekCost,
