@@ -1404,7 +1404,7 @@ function Session({
           ['Files & context',   ['include', 'add', 'run', 'search', 'history', 'undo', 'rewind']],
           ['Chats',             ['save', 'resume', 'sessions', 'remove-chat', 'search-chats', 'export', 'export-session', 'import-session', 'copy', 'copy-block']],
           ['Git',               ['git', 'pr', 'review']],
-          ['Account',           ['login', 'logout', 'usage', 'credits', 'upgrade', 'billing']],
+          ['Account',           ['login', 'logout', 'usage', 'account', 'credits', 'upgrade', 'billing']],
           ['Keys & endpoints',  ['api', 'sennoric-key', 'endpoint']],
           ['Agent behavior',    ['thinking', 'system', 'adviser', 'goal', 'retry', 'btw', 'compare', 'compare-models', 'remember', 'forget', 'todo', 'skills', 'skill-generator', 'skill-delete', 'profile', 'permissions', 'watch']],
           ['Computer & media',  ['computer', 'cu', 'vision', 'ss', 'macro', 'speak', 'img-gen', 'img-gen-model']],
