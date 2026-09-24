@@ -31,15 +31,36 @@ test('a 429 with a weekly-allowance message classifies as quota', () => {
   const err = { status: 429, message: 'weekly allowance reached', error: { limit_usd: 5 } };
   const { kind, message } = classifyProviderError(err, 'fresco');
   assert.equal(kind, 'quota');
-  assert.match(message, /weekly allowance reached/i);
-  assert.match(message, /\$5\.00/);
+  assert.match(message, /weekly usage limit reached/i);
+  // Allowances are never shown to users as a dollar figure.
+  assert.doesNotMatch(message, /\$/);
 });
 
 test('a 429 with a window-scoped error classifies as quota', () => {
   const err = { status: 429, message: 'rate limited', error: { window: true, reset_at: new Date(Date.now() + 60_000).toISOString() } };
   const { kind, message } = classifyProviderError(err, 'fresco');
   assert.equal(kind, 'quota');
-  assert.match(message, /two-hour allowance reached/i);
+  // The window is 5 hours now (was 2) — the message must not name a stale length.
+  assert.match(message, /rolling-window usage limit reached/i);
+  assert.doesNotMatch(message, /two-hour/i);
+  assert.match(message, /Resets in/);
+});
+
+test('a 402 (API key with no credit balance) classifies as quota and points at billing', () => {
+  const err = { status: 402, message: '402 No API credit balance remaining.', error: { type: 'insufficient_credits_error', credit_balance_usd: 0 } };
+  const { kind, message } = classifyProviderError(err, 'fresco');
+  assert.equal(kind, 'quota');
+  assert.match(message, /No Sennoric credits remaining/);
+  assert.match(message, /\/credits buy/);
+  assert.doesNotMatch(message, /Model error/);
+});
+
+test('a 503 for a kill-switched model shows the Worker message and suggests an alternative', () => {
+  const err = { status: 503, message: '503 status code', error: { type: 'model_unavailable', message: 'Fresco 1.3 is temporarily unavailable. Please check back shortly.' } };
+  const { kind, message } = classifyProviderError(err, 'fresco-1.3');
+  assert.equal(kind, 'availability');
+  assert.match(message, /Fresco 1\.3 is temporarily unavailable/);
+  assert.match(message, /fresco-latest/);
 });
 
 test('a 404 classifies as availability', () => {
