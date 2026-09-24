@@ -72,18 +72,15 @@ npm link        # the CLI runs from source — no build step
 
 ### First run
 
-Run `sennoric`, then set your API key inside the chat:
+Run `sennoric`, then sign in with a free Sennoric account:
 
 ```
-/api claude YOUR_ANTHROPIC_KEY
+/login        ← opens your browser; saves an API key and your session
+/usage        ← plan, credits, and how much of your usage limits you've used
 ```
 
-Or use a free model with no key required:
-
-```
-/model groq        ← Llama 3.3 70B, free
-/model gemini      ← Gemini 2.0 Flash, generous free tier
-```
+Prefer not to sign in? Point Sennoric at any OpenAI-compatible server with
+`/endpoint` (see below) — Ollama, LM Studio, OpenRouter, and so on.
 
 ### Linux computer-use dependencies (optional)
 
@@ -109,61 +106,42 @@ Grant **Accessibility** and **Screen Recording** permissions to Terminal (or iTe
 
 ---
 
-## API Keys
+## Sennoric account & billing
 
-Set keys before running, or use `/api` inside the chat:
+Fresco and Glyph run on Sennoric's servers and need a Sennoric account.
+`/login` saves two things (encrypted in `~/.sennoric/config.json`):
 
-```bash
-# Option 1 — environment variables
-export ANTHROPIC_API_KEY=sk-ant-...
-export OPENAI_API_KEY=sk-...
-export GEMINI_API_KEY=...
-export GROQ_API_KEY=gsk_...
-export MISTRAL_API_KEY=...
+- an **API key** (`sennoric-sk-…`) that the agent uses for model requests, and
+- your **account session**, used by `/usage`, `/credits`, `/upgrade`, and `/billing`.
 
-# Option 2 — .env file (place in ~/.sennoric/.env or your project root)
-# Copy .env.example to get started
-cp .env.example ~/.sennoric/.env
-```
+Requests made with an API key are billed from **credits only** — they don't
+draw on the Free/Pro included usage that signed-in chat gets. `/credits buy <amount>`
+tops up ($5–$500); `/credits redeem <code>` redeems a credit code.
 
-Or set them live inside the CLI:
-
-```
-/api claude sk-ant-...
-/api gpt sk-...
-/api gemini AI...
-```
+You can also paste a key you created at sennoric.com/keys with `/sennoric-key <key>`,
+or set `SENNORIC_MODEL` to change the default model.
 
 ---
 
 ## Models
 
-| Alias | Provider | Notes |
+| Model id | Name | Notes |
 |---|---|---|
-| `fresco` | Sennoric Labs | Fresco 1.2.5 — live. Safety-retrained 1.3 in progress; see [safety report](https://sennoriclabs.dev/fresco-suspension). |
-| `glyph` | Sennoric Labs | No key required — free but slow (up to 100s) |
-| `openrouter` / `or` | OpenRouter | 200+ models via one key |
-| `fable` | Anthropic | claude-fable-5 |
-| `claude` | Anthropic | claude-sonnet-4-6 |
-| `claude-opus` | Anthropic | claude-opus-4-8 |
-| `claude-haiku` | Anthropic | claude-haiku-4-5 |
-| `gpt` | OpenAI | gpt-4o |
-| `gpt-mini` | OpenAI | gpt-4o-mini |
-| `gemini` | Google | gemini-2.0-flash |
-| `gemini-2.5-pro` | Google | gemini-2.5-pro |
-| `groq` | Groq | llama-3.3-70b |
-| `mistral` | Mistral | mistral-large |
-| `glm` / `glm-5.2` | Z.ai | GLM-5.2, 753B, beats GPT-5.5 on coding. Requires Z.ai key (`/api glm`) |
-| `ollama` | Local | Requires Ollama running |
+| `fresco` | Fresco 1.2.5 | Default. Flagship model for general chat, writing, and code. |
+| `fresco-1.3` | Fresco 1.3 | Newest Fresco release, safety-retrained — see the [safety report](https://sennoriclabs.dev/fresco-suspension). |
+| `fresco-latest` | Fresco (latest) | Always the newest Fresco version that is currently available. |
+| `glyph` | Glyph 1.1 | Small, fast model for quick conversations. |
+| `glyph-latest` | Glyph (latest) | Always the newest Glyph version that is currently available. |
+
+All of them are served by Sennoric and need `/login`. `/models` shows the live
+list from the server and flags any model that is temporarily unavailable.
 
 Switch models anytime:
 
 ```
+/model fresco-latest
 /model glyph
-/model claude
-/model gpt
-/model gemini-2.5-pro
-/model ollama
+/model my-endpoint     ← any endpoint saved with /endpoint
 ```
 
 ### OpenAI-compatible endpoints (OpenRouter, LM Studio, etc.)
@@ -558,13 +536,19 @@ Type any command in the CLI. All commands start with `/`. Tab completes the comm
 
 | Command | Description |
 |---|---|
-| `/model <name>` | Switch model (e.g. `claude`, `gpt`, `fresco`, `gemini`, `groq`) |
+| `/model <name>` | Switch model (e.g. `fresco`, `fresco-latest`, `glyph`, or a saved endpoint) |
 | `/models` | List all available models and custom endpoints |
-| `/api <provider> <key>` | Set an API key (`claude`, `gpt`, `groq`, `mistral`, `gemini`, `glm`, `openrouter`) |
+| `/api <provider> <key>` | Set a tool API key (`tavily`, `sketchfab`) |
 | `/sennoric-key <key>` | Save your Sennoric API key for Fresco access |
 | `/sennoric-key remove` | Clear your Sennoric API key |
+| `/login` | Sign in to your Sennoric account in the browser |
+| `/logout` | Remove the saved session and API key from this machine |
+| `/usage` | Plan, credit balance, and usage limits (alias `/account`) |
+| `/credits [buy <amount>\|redeem <code>]` | Show or add credits |
+| `/upgrade` | Open checkout for Sennoric Pro |
+| `/billing` | Manage your subscription |
 | `/endpoint <name> <url> [model] [key]` | Add a custom OpenAI-compatible endpoint |
-| `/thinking [on\|off\|<tokens>]` | Toggle extended thinking (Claude only) |
+| `/thinking [on\|off\|<tokens>]` | Toggle extended thinking (models that support it) |
 
 ### Chat
 
