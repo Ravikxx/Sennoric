@@ -12,6 +12,12 @@ test('an npm install (no .git) updates from the registry instead of pulling', ()
   assert.deepEqual(plan.steps, ['npm install -g @sennoric-labs-ai/solan-cli@latest']);
 });
 
+test('a Homebrew install upgrades through brew, not npm', () => {
+  const root = '/opt/homebrew/Cellar/sennoric/2.0.5/libexec/lib/node_modules/@sennoric-labs-ai/solan-cli';
+  const plan = updatePlan(root, () => ({ name: '@sennoric-labs-ai/solan-cli' }), fakeFs([join(root, 'package.json')]));
+  assert.deepEqual(plan, { kind: 'brew', steps: ['brew upgrade sennoric'] });
+});
+
 test('a source checkout pulls and installs, and skips the build when there is no build script', () => {
   const plan = updatePlan(ROOT, () => ({ name: 'x', scripts: { test: 'node test/run.js' } }), fakeFs([join(ROOT, 'package.json'), join(ROOT, '.git')]));
   assert.equal(plan.kind, 'git');

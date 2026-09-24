@@ -21,6 +21,11 @@ function run(cmd, cwd) {
 export function updatePlan(root, readPkg = (p) => JSON.parse(readFileSync(p, 'utf8')), exists = existsSync) {
   const pkgPath = join(root, 'package.json');
   const pkg = exists(pkgPath) ? readPkg(pkgPath) : {};
+  // Homebrew keeps formulae under .../Cellar/<name>/<version>/; reinstalling
+  // through npm there would leave a second, unmanaged copy on PATH.
+  if (/[\\/]Cellar[\\/]/.test(root)) {
+    return { kind: 'brew', steps: ['brew upgrade sennoric'] };
+  }
   if (!exists(join(root, '.git'))) {
     return { kind: 'npm', steps: [`npm install -g ${pkg.name || '@sennoric-labs-ai/solan-cli'}@latest`] };
   }
@@ -46,9 +51,9 @@ export function runUpdate() {
   process.stdout.write('\n\x1b[1m◈ Sennoric Update\x1b[0m\n');
 
   const plan = updatePlan(rootDir);
-  if (plan.kind === 'npm') {
+  if (plan.kind !== 'git') {
     try {
-      step('Installing the latest release from npm…');
+      step(plan.kind === 'brew' ? 'Upgrading via Homebrew…' : 'Installing the latest release from npm…');
       run(plan.steps[0], process.cwd());
       ok('Sennoric updated — restart it to use the new version');
     } catch {
