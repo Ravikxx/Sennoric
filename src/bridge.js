@@ -140,7 +140,10 @@ function attachShell(ws) {
 // Local/custom providers can be used without a hosted-provider key. Sennoric
 // hosted models require the account key created by /login or /sennoric-key.
 const KEYLESS_PROVIDERS = new Set(['ollama', 'custom']);
-const SENNORIC_ACCOUNT_PROVIDERS = new Set(['fresco', 'glyph']);
+// resolveProvider() returns 'sennoric' for every hosted model id, so that is
+// what must be matched here — matching the model aliases themselves meant
+// hosted models never counted as available.
+const SENNORIC_ACCOUNT_PROVIDERS = new Set(['sennoric']);
 
 function availableModels() {
   const current = getSavedModel() || 'fresco';

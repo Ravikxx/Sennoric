@@ -31,7 +31,7 @@ Usage: sennoric [options] [prompt]
   prompt              Send a message on startup
 
 Options:
-  -m, --model <name>  Model alias (fresco, glyph, or a saved /endpoint name)
+  -m, --model <name>  Model id (fresco, fresco-1.3, fresco-latest, glyph, or a saved /endpoint name)
   -M, --mode <name>   Mode: ask | plan | bypass | decide-for-me
   -c, --continue      Resume the most recent session / workspace
   -r, --resume [name] Resume a saved session (no name → interactive picker)

@@ -1453,18 +1453,21 @@ function Session({
         return;
       }
       case 'models': {
-        const { CUSTOM_ENDPOINTS, PROVIDER_MODELS } = await import('../config.js');
+        const { CUSTOM_ENDPOINTS, PROVIDER_MODELS, MODEL_CATALOG, isSennoricModelUnavailable } = await import('../config.js');
         const fmtCtx = (v) => v ? (v >= 1_000_000 ? (v / 1_000_000).toFixed(1) + 'M' : (v / 1000).toFixed(0) + 'k') : '?';
         const resolved = new Set();
         const shortNames = new Set();
         const entries = [];
         for (const [alias, id] of Object.entries(MODELS)) {
           resolved.add(id);
+          const unavailable = isSennoricModelUnavailable(alias);
           entries.push({
-            name: alias.replace(/-/g, ' '),
+            // Raw id, not a prettified name — it's what /model <name> takes.
+            name: alias,
             ctx: getContextWindow(alias),
             isCurrent: alias === model || id === model,
             provider: null,
+            note: `${MODEL_CATALOG[alias]?.label || ''}${unavailable ? ' — temporarily unavailable' : ''}`,
           });
         }
         const skipModel = /tts|embed|aqa|robotics|clip|whisper|imagen|veo|lyria|guard|moderation|ocr|omni|realtime|computer-use|customtools|native-audio|deep-research|antigravity/i;
@@ -1491,10 +1494,11 @@ function Session({
         entries.sort((a, b) => a.name.localeCompare(b.name));
         const maxName = Math.min(32, Math.max(...entries.map(e => e.name.length)));
         const lines = ['Models:'];
-        for (const { name, ctx, isCurrent, provider } of entries) {
+        for (const { name, ctx, isCurrent, provider, note } of entries) {
           const padded = name.length <= maxName ? name.padEnd(maxName) : name.slice(0, maxName - 1) + '…';
           const prov = provider ? ` \x1b[90m(${provider})\x1b[0m` : '';
-          lines.push(`${isCurrent ? '▸' : ' '} ${padded}  ${fmtCtx(ctx).padStart(5)}${prov}`);
+          const desc = note ? `  \x1b[90m${note}\x1b[0m` : '';
+          lines.push(`${isCurrent ? '▸' : ' '} ${padded}  ${fmtCtx(ctx).padStart(5)}${prov}${desc}`);
         }
         const eps = Object.entries(CUSTOM_ENDPOINTS);
         if (eps.length) {
@@ -1512,15 +1516,19 @@ function Session({
       case 'model': {
         if (!arg) {
           const ctx = getContextWindow(model);
-          push({ type: 'info', text: `current model: ${model}  ·  context: ${ctx >= 1_000_000 ? (ctx / 1_000_000).toFixed(1) + 'M' : (ctx / 1000).toFixed(0) + 'k'} tokens` });
+          const { modelLabel } = await import('../config.js');
+          const label = modelLabel(model);
+          push({ type: 'info', text: `current model: ${model}${label !== model ? ` (${label})` : ''}  ·  context: ${ctx >= 1_000_000 ? (ctx / 1_000_000).toFixed(1) + 'M' : (ctx / 1000).toFixed(0) + 'k'} tokens` });
           return;
         }
-        const { CUSTOM_ENDPOINTS, PROVIDER_MODELS } = await import('../config.js');
+        const { CUSTOM_ENDPOINTS, PROVIDER_MODELS, modelLabel, isSennoricModelUnavailable } = await import('../config.js');
         const inDynamic = Object.values(PROVIDER_MODELS).some(list => list.some(m => m.id === arg));
         if (!MODELS[arg] && !CUSTOM_ENDPOINTS[arg] && !inDynamic && !arg.includes('/')) { push({ type: 'error', text: `Unknown model "${arg}". /models to list.` }); return; }
         setModel(arg); agentRef.current?.setModel(arg); try { saveModel(arg); } catch {}
         const ctx = getContextWindow(arg);
-        push({ type: 'info', text: `model → ${arg}  ·  context: ${ctx >= 1_000_000 ? (ctx / 1_000_000).toFixed(1) + 'M' : (ctx / 1000).toFixed(0) + 'k'} tokens` });
+        const label = modelLabel(arg);
+        const warn = isSennoricModelUnavailable(arg) ? '\n⚠ Sennoric reports this model as temporarily unavailable — requests may fail until it is back.' : '';
+        push({ type: 'info', text: `model → ${arg}${label !== arg ? ` (${label})` : ''}  ·  context: ${ctx >= 1_000_000 ? (ctx / 1_000_000).toFixed(1) + 'M' : (ctx / 1000).toFixed(0) + 'k'} tokens${warn}` });
         return;
       }
       case 'mode': {
