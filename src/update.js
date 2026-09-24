@@ -14,6 +14,29 @@ function run(cmd, cwd) {
   execSync(cmd, { cwd, stdio: 'inherit' });
 }
 
+// How this copy was installed decides how it updates. A source checkout
+// (git clone + npm link) pulls; the published package — the usual install,
+// `npm install -g @sennoric-labs-ai/solan-cli` — has no .git directory, so
+// pulling there always failed and left npm users with no working update.
+export function updatePlan(root, readPkg = (p) => JSON.parse(readFileSync(p, 'utf8')), exists = existsSync) {
+  const pkgPath = join(root, 'package.json');
+  const pkg = exists(pkgPath) ? readPkg(pkgPath) : {};
+  if (!exists(join(root, '.git'))) {
+    return { kind: 'npm', steps: [`npm install -g ${pkg.name || '@sennoric-labs-ai/solan-cli'}@latest`] };
+  }
+  const steps = ['git pull --ff-only', 'npm install --prefer-offline'];
+  // There is no build step today (the CLI runs from source); only run one if
+  // package.json actually defines it, instead of failing on a missing script.
+  if (pkg.scripts?.build) steps.push('npm run build');
+  return { kind: 'git', steps };
+}
+
+const STEP_LABELS = {
+  'git pull --ff-only':           ['Pulling from GitHub…', 'Up to date', 'git pull failed — resolve any conflicts manually, then re-run'],
+  'npm install --prefer-offline': ['Installing dependencies…', 'Dependencies installed', 'npm install failed'],
+  'npm run build':                ['Building…', 'Build complete', 'Build failed'],
+};
+
 export function runUpdate() {
   const pkgPath = join(rootDir, 'package.json');
   const before  = existsSync(pkgPath)
@@ -22,35 +45,34 @@ export function runUpdate() {
 
   process.stdout.write('\n\x1b[1m◈ Sennoric Update\x1b[0m\n');
 
+  const plan = updatePlan(rootDir);
+  if (plan.kind === 'npm') {
+    try {
+      step('Installing the latest release from npm…');
+      run(plan.steps[0], process.cwd());
+      ok('Sennoric updated — restart it to use the new version');
+    } catch {
+      fail(`Update failed — try running it yourself: ${plan.steps[0]}`);
+      process.exit(1);
+    }
+    process.stdout.write('\n');
+    return;
+  }
+
   // Capture the local HEAD before pulling so we can show a changelog after
   let oldHead = '';
   try { oldHead = execSync('git rev-parse HEAD', { cwd: rootDir }).toString().trim(); } catch {}
 
-  try {
-    step('Pulling from GitHub…');
-    run('git pull --ff-only', rootDir);
-    ok('Up to date');
-  } catch {
-    fail('git pull failed — resolve any conflicts manually, then re-run');
-    process.exit(1);
-  }
-
-  try {
-    step('Installing dependencies…');
-    run('npm install --prefer-offline', rootDir);
-    ok('Dependencies installed');
-  } catch {
-    fail('npm install failed');
-    process.exit(1);
-  }
-
-  try {
-    step('Building…');
-    run('npm run build', rootDir);
-    ok('Build complete');
-  } catch {
-    fail('Build failed');
-    process.exit(1);
+  for (const cmd of plan.steps) {
+    const [start, done, failed] = STEP_LABELS[cmd];
+    try {
+      step(start);
+      run(cmd, rootDir);
+      ok(done);
+    } catch {
+      fail(failed);
+      process.exit(1);
+    }
   }
 
   const after = existsSync(pkgPath)
