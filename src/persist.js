@@ -8,7 +8,7 @@ import { writeJsonAtomic, writeTextAtomic } from './tui/persistence.js';
 
 const DIR  = join(homedir(), '.sennoric');
 const FILE = join(DIR, 'config.json');
-const SECRET_KEYS = ['apiKeys', 'sennoricKey', 'discordToken'];
+const SECRET_KEYS = ['apiKeys', 'sennoricKey', 'sennoricSession', 'discordToken'];
 
 function load() {
   try {
@@ -144,6 +144,21 @@ export function getSennoricKey() { return _cfg.sennoricKey || null; }
 
 export function saveSennoricKey(key) {
   _cfg.sennoricKey = key;
+  save(_cfg);
+}
+
+// Account session from /login's device flow — { token, email, savedAt }.
+// Separate from the sennoric-sk- API key above: the Worker's account and
+// billing routes (/account, /billing/*) accept only a session token, never an
+// API key. The token expires after 7 days server-side; encrypted at rest like
+// the other secrets.
+export function getSennoricSession() {
+  const s = _cfg.sennoricSession;
+  return s && typeof s === 'object' && typeof s.token === 'string' ? s : null;
+}
+
+export function saveSennoricSession(session) {
+  _cfg.sennoricSession = session || null;
   save(_cfg);
 }
 
