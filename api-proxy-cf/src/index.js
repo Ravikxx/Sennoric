@@ -241,6 +241,17 @@ async function parseToken(token, secret) {
   } catch { return null }
 }
 
+// Session tokens (makeToken) and signed OAuth/handoff states (signState)
+// share one HMAC scheme, and states carry a `uid` too. Every state has an
+// `action`; sessions never do. Anything that authenticates a request must
+// go through this so a state leaked via a provider URL can't be replayed
+// as a Bearer token.
+async function parseSessionToken(token, secret) {
+  const payload = await parseToken(token, secret)
+  if (!payload?.uid || payload.action !== undefined) return null
+  return payload
+}
+
 async function verifyTurnstile(token, secret, ip) {
   if (!secret) return false // reject if not configured
   const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
@@ -305,7 +316,7 @@ function signupRequiredResponse() {
 async function requireAuth(c) {
   const auth = c.req.header('Authorization') || ''
   const token = auth.replace(/^Bearer\s+/i, '').trim()
-  const payload = await parseToken(token, c.env.TOKEN_SECRET)
+  const payload = await parseSessionToken(token, c.env.TOKEN_SECRET)
   if (!payload?.uid) return null
   const user = await c.env.DB.prepare('SELECT * FROM users WHERE id=?').bind(payload.uid).first()
   if (!user || user.banned) return null
@@ -354,7 +365,7 @@ function clearSessionCookieHeader(c) {
 async function sessionUserFromCookieName(c, cookieName) {
   const token = getCookieValue(c, cookieName)
   if (!token) return null
-  const payload = await parseToken(token, c.env.TOKEN_SECRET)
+  const payload = await parseSessionToken(token, c.env.TOKEN_SECRET)
   if (!payload?.uid) return null
   const user = await c.env.DB.prepare('SELECT * FROM users WHERE id=?').bind(payload.uid).first()
   if (!user || user.banned) return null
@@ -1041,11 +1052,16 @@ async function oauthFinish(c, { id_field, email, provider_id, return_to }) {
     user = await c.env.DB.prepare('SELECT * FROM users WHERE email=?').bind(email.toLowerCase()).first()
   }
   if (user) {
-    const updateFields = [id_field, provider_id]
-    if (!user[id_field]) {
-      updateFields.push('verified', 1)
+    if (!user.verified) {
+      // Nobody proved ownership of this email before the provider did, so the
+      // password (if any) may have been set by someone else via /auth/register.
+      // Drop it and invalidate outstanding tokens; the owner can set a new
+      // password through the reset flow.
+      await c.env.DB.prepare(
+        "UPDATE users SET pw_hash='', verify_token=NULL, token_version=COALESCE(token_version,0)+1 WHERE id=?"
+      ).bind(user.id).run()
+      user = { ...user, pw_hash: '', token_version: (user.token_version || 0) + 1 }
     }
-    updateFields.push('ip', ip, user.id)
     await c.env.DB.prepare(
       `UPDATE users SET ${id_field}=?, verified=1, ip=? WHERE id=?`
     ).bind(provider_id, ip, user.id).run()
@@ -1842,11 +1858,17 @@ function stripeApi(env, path, { method = 'GET', params } = {}) {
 // Stripe-Signature header, over the string "<t>.<raw body>" — see
 // https://docs.stripe.com/webhooks#verify-manually. Multiple v1 values can
 // appear during a signing-secret rotation; any match is accepted.
+const STRIPE_SIGNATURE_TOLERANCE_S = 300
+
 async function verifyStripeSignature(rawBody, signatureHeader, signingSecret) {
   if (!signatureHeader || !signingSecret) return false
   const timestamps = signatureHeader.split(',').filter((p) => p.startsWith('t=')).map((p) => p.slice(2))
   const candidates = signatureHeader.split(',').filter((p) => p.startsWith('v1=')).map((p) => p.slice(3))
   if (!timestamps[0] || !candidates.length) return false
+  // Reject stale signatures so a captured payload can't be replayed later
+  // (Stripe's own libraries default to the same 5-minute tolerance).
+  const age = Math.abs(Math.floor(Date.now() / 1000) - Number(timestamps[0]))
+  if (!Number.isFinite(age) || age > STRIPE_SIGNATURE_TOLERANCE_S) return false
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(signingSecret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
   const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamps[0]}.${rawBody}`))
   const expectedHex = [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('')
@@ -2183,12 +2205,28 @@ app.post('/webhooks/stripe', async (c) => {
   // auto-topup can charge it off-session — the PaymentIntent has to be
   // fetched separately since the checkout.session payload only carries its
   // id, not the expanded object.
-  if (event.type === 'checkout.session.completed' && obj?.mode === 'payment' && obj?.metadata?.kind === 'credit_topup') {
+  //
+  // Stripe delivers at least once, and a 500 from any later step makes it
+  // retry, so the credit is keyed on the checkout session id and written in
+  // the same transaction as that key: a repeat delivery hits the primary key,
+  // rolls back, and credits nothing. Delayed payment methods complete the
+  // session unpaid and credit later via async_payment_succeeded.
+  const topupEvent = event.type === 'checkout.session.completed' || event.type === 'checkout.session.async_payment_succeeded'
+  if (topupEvent && obj?.mode === 'payment' && obj?.metadata?.kind === 'credit_topup') {
     const userId = obj.client_reference_id || obj.metadata?.user_id
-    if (!userId || !obj.amount_total) return json({ ok: true })
+    if (!userId || !obj.amount_total || !obj.id || obj.payment_status !== 'paid') return json({ ok: true })
     const creditMicrodollars = Number(obj.amount_total) * 10_000
-    await c.env.DB.prepare('UPDATE users SET credit_balance = credit_balance + ? WHERE id=?')
-      .bind(creditMicrodollars, userId).run()
+    try {
+      await c.env.DB.batch([
+        c.env.DB.prepare('INSERT INTO stripe_events (id, kind, user_id, created_at) VALUES (?,?,?,?)')
+          .bind(`topup:${obj.id}`, 'credit_topup', userId, Math.floor(Date.now() / 1000)),
+        c.env.DB.prepare('UPDATE users SET credit_balance = credit_balance + ? WHERE id=?')
+          .bind(creditMicrodollars, userId),
+      ])
+    } catch (error) {
+      if (/UNIQUE|PRIMARY KEY|constraint/i.test(String(error?.message))) return json({ ok: true, duplicate: true })
+      throw error
+    }
     if (obj.customer) {
       let paymentMethod = null
       if (obj.payment_intent) {
@@ -6134,8 +6172,12 @@ async function resolveBridgeUser(c) {
     const keyRow = await c.env.DB.prepare('SELECT user_id FROM api_keys WHERE key_value=? AND revoked=0').bind(auth).first()
     return keyRow ? keyRow.user_id : null
   }
-  const payload = await parseToken(auth, c.env.TOKEN_SECRET)
-  return payload?.uid || null
+  const payload = await parseSessionToken(auth, c.env.TOKEN_SECRET)
+  if (!payload) return null
+  const user = await c.env.DB.prepare('SELECT id, banned, token_version FROM users WHERE id=?').bind(payload.uid).first()
+  if (!user || user.banned) return null
+  if ((payload.v || 0) !== (user.token_version || 0)) return null
+  return user.id
 }
 
 app.get('/bridge/ws', async (c) => {

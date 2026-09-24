@@ -1,6 +1,7 @@
 import { afterEach, mock, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
+import fs from 'node:fs'
 import {
   CreditCodeError,
   buildSquareCheckoutPayload,
@@ -242,6 +243,7 @@ class D1TestDatabase {
         human_reviewed_by TEXT
       );
     `)
+    this.database.exec(fs.readFileSync(new URL('../migrations/056_stripe_events.sql', import.meta.url), 'utf8'))
   }
 
   prepare(sql) { return new Statement(this.database, sql) }
@@ -758,7 +760,7 @@ test('a completed credit top-up credits the balance and saves the payment method
   const body = JSON.stringify({
     type: 'checkout.session.completed',
     data: { object: {
-      mode: 'payment', client_reference_id: 'u1', metadata: { kind: 'credit_topup' },
+      id: 'cs_test1', mode: 'payment', payment_status: 'paid', client_reference_id: 'u1', metadata: { kind: 'credit_topup' },
       amount_total: 2500, customer: 'cus_test1', payment_intent: 'pi_test1',
     } },
   })
@@ -773,6 +775,81 @@ test('a completed credit top-up credits the balance and saves the payment method
   assert.equal(row.credit_balance, 25_000_000) // $25 = 25,000,000 microdollars
   assert.equal(row.stripe_customer_id, 'cus_test1')
   assert.equal(row.stripe_default_payment_method, 'pm_test1')
+})
+
+test('concurrent usage charges and a top-up never overwrite each other', async () => {
+  const db = new D1TestDatabase()
+  addUser(db, 'u1')
+  const t0 = Date.parse('2026-01-01T00:00:00Z')
+  db.prepare("UPDATE users SET credit_balance=1000000 WHERE id='u1'").run()
+  // Each charge reads the row before any of them writes; with no included
+  // budget the whole cost comes out of credits.
+  const charges = [1, 2, 3].map(() => chargeAccountUsage(db, 'u1', 100_000, 0, 0, t0))
+  db.prepare("UPDATE users SET credit_balance = credit_balance + 500000 WHERE id='u1'").run()
+  await Promise.all(charges)
+  assert.equal(db.prepare("SELECT credit_balance FROM users WHERE id='u1'").first().credit_balance, 1_200_000)
+})
+
+function topupBody(overrides = {}) {
+  return JSON.stringify({
+    type: 'checkout.session.completed',
+    data: { object: {
+      id: 'cs_dup', mode: 'payment', payment_status: 'paid', client_reference_id: 'u1',
+      metadata: { kind: 'credit_topup' }, amount_total: 1000, ...overrides,
+    } },
+  })
+}
+
+test('a redelivered credit-topup webhook credits only once', async () => {
+  const db = new D1TestDatabase()
+  const webhookSecret = 'whsec_test'
+  addUser(db, 'u1')
+  const env = { DB: db, STRIPE_SECRET_KEY: 'sk_test_x', STRIPE_WEBHOOK_SECRET: webhookSecret }
+  const body = topupBody()
+  for (let i = 0; i < 3; i++) {
+    const res = await app.request('/webhooks/stripe', {
+      method: 'POST', headers: { 'stripe-signature': await stripeSignature(body, webhookSecret) }, body,
+    }, env)
+    assert.equal(res.status, 200)
+  }
+  assert.equal(db.prepare("SELECT credit_balance FROM users WHERE id='u1'").first().credit_balance, 10_000_000)
+})
+
+test('an unpaid credit-topup checkout credits nothing until async payment succeeds', async () => {
+  const db = new D1TestDatabase()
+  const webhookSecret = 'whsec_test'
+  addUser(db, 'u1')
+  const env = { DB: db, STRIPE_SECRET_KEY: 'sk_test_x', STRIPE_WEBHOOK_SECRET: webhookSecret }
+  const unpaid = topupBody({ payment_status: 'unpaid' })
+  let res = await app.request('/webhooks/stripe', {
+    method: 'POST', headers: { 'stripe-signature': await stripeSignature(unpaid, webhookSecret) }, body: unpaid,
+  }, env)
+  assert.equal(res.status, 200)
+  assert.equal(db.prepare("SELECT credit_balance FROM users WHERE id='u1'").first().credit_balance, 0)
+
+  const paid = JSON.stringify({ ...JSON.parse(topupBody()), type: 'checkout.session.async_payment_succeeded' })
+  res = await app.request('/webhooks/stripe', {
+    method: 'POST', headers: { 'stripe-signature': await stripeSignature(paid, webhookSecret) }, body: paid,
+  }, env)
+  assert.equal(res.status, 200)
+  assert.equal(db.prepare("SELECT credit_balance FROM users WHERE id='u1'").first().credit_balance, 10_000_000)
+})
+
+test('a Stripe signature older than the tolerance is rejected', async () => {
+  const db = new D1TestDatabase()
+  const webhookSecret = 'whsec_test'
+  addUser(db, 'u1')
+  const env = { DB: db, STRIPE_SECRET_KEY: 'sk_test_x', STRIPE_WEBHOOK_SECRET: webhookSecret }
+  const body = topupBody()
+  const t = Math.floor(Date.now() / 1000) - 3600
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(webhookSecret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${t}.${body}`))
+  const hex = [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('')
+  const res = await app.request('/webhooks/stripe', {
+    method: 'POST', headers: { 'stripe-signature': `t=${t},v1=${hex}` }, body,
+  }, env)
+  assert.equal(res.status, 401)
+  assert.equal(db.prepare("SELECT credit_balance FROM users WHERE id='u1'").first().credit_balance, 0)
 })
 
 test('a subscription checkout does not fall through to the credit-topup branch', async () => {
